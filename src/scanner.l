@@ -68,6 +68,7 @@ static char *str_buf_finish(ScannerExtra *extra) {
 "func"          { return FUNC; }
 "return"        { return RETURN; }
 "struct"        { return STRUCT; }
+"class"         { return CLASS; }
 "true"          { yylval->bval = 1; return BOOL_LIT; }
 "false"         { yylval->bval = 0; return BOOL_LIT; }
 "int"           { return TYPE_INT; }
