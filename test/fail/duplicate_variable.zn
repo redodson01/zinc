@@ -1,0 +1,6 @@
+# ERRORS: 1
+func main() {
+  var x = 10
+  var x = 20
+  0
+}

@@ -1,0 +1,8 @@
+# Test: Invalid declarations (expect 1 error)
+# ERRORS: 1
+
+func main() {
+    var 123 = 10
+    var valid = 30
+    return 0
+}

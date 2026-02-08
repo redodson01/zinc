@@ -1,0 +1,5 @@
+# ERRORS: 2
+func main() {
+  var x = no_such_func(42)
+  0
+}

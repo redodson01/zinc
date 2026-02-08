@@ -1,0 +1,73 @@
+# Test: Function definitions and calls
+
+# Function with parameters
+func add(a: int, b: int) {
+    a + b
+}
+
+# Function with single parameter
+func double_val(x: int) {
+    x * 2
+}
+
+# Function with no return value
+func do_nothing() {
+    0
+}
+
+# Function with conditional return
+func my_abs(x: int) {
+    if x < 0 {
+        return -x
+    }
+    x
+}
+
+# Recursive function
+func factorial(n: int) {
+    if n <= 1 {
+        return 1
+    }
+    n * factorial(n - 1)
+}
+
+# Function that checks a range
+func is_in_range(value: int, min: int, max: int) {
+    if value >= min && value <= max {
+        return true
+    }
+    false
+}
+
+# Function with char parameter
+func is_uppercase(ch: char) {
+    if ch >= 'A' && ch <= 'Z' {
+        return true
+    }
+    false
+}
+
+# Main function with function calls
+func main() {
+    var result = add(10, 20)
+    var nested = add(add(1, 2), add(3, 4))
+
+    # Function call in expression
+    var x = double_val(5) + 10
+    var y = my_abs(-42)
+
+    # Test factorial
+    var fact5 = factorial(5)
+
+    # Test char function
+    var upper = is_uppercase('A')
+
+    if result != 30 { return 1 }
+    if nested != 10 { return 1 }
+    if x != 20 { return 1 }
+    if y != 42 { return 1 }
+    if fact5 != 120 { return 1 }
+    if !upper { return 1 }
+
+    0
+}

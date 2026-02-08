@@ -1,0 +1,9 @@
+# Test: Missing brace (expect 1 error)
+# ERRORS: 1
+
+func main() {
+    if true {
+        var x = 1
+
+    return 0
+}

@@ -1,0 +1,6 @@
+# ERRORS: 1
+func main() {
+  let x = 10
+  x = 20
+  0
+}

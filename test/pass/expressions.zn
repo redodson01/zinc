@@ -1,0 +1,56 @@
+# Test: Expression types
+
+func main() {
+    # Variables for tests
+    var a = true
+    var b = false
+    var c = true
+    var d = 4
+    var x = 10
+    var foo = 5
+    var bar = 3
+
+    # Arithmetic
+    var r1 = 1 + 2
+    var r2 = 5 - 3
+    var r3 = 4 * 6
+    var r4 = 10 / 2
+    var r5 = 17 % 5
+
+    # Unary operators
+    var neg = -5
+    var pos = +5
+    var not1 = !true
+    var not2 = !false
+
+    # Comparison operators
+    var cmp1 = 1 < 2
+    var cmp2 = 2 > 1
+    var cmp3 = 1 <= 1
+    var cmp4 = 2 >= 2
+    var cmp5 = 1 == 1
+    var cmp6 = 1 != 2
+
+    # Logical operators
+    var log1 = true && false
+    var log2 = true || false
+
+    # Operator precedence
+    var prec1 = 1 + 2 * 3
+    var prec2 = (1 + 2) * 3
+    var prec3 = 1 + 2 + 3
+    var prec4 = 1 < 2 && 3 > 2
+    var prec5 = !true || false && true
+
+    # Complex expressions
+    var complex1 = (1 + 2) * (3 - 4) / 5
+    var complex2 = -(1 + 2)
+    var complex3 = !(a && b) || c
+
+    # Identifiers in expressions
+    var id1 = x
+    var id2 = foo + bar
+    var id3 = x * d + foo * bar
+
+    0
+}

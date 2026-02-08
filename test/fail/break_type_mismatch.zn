@@ -1,0 +1,12 @@
+# ERRORS: 1
+# Test: break with mismatched types
+
+func main() {
+    var x = while true {
+        if true {
+            break 42
+        }
+        break 3.14
+    }
+    0
+}

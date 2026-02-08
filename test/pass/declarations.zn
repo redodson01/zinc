@@ -1,0 +1,27 @@
+# Test: Variable and constant declarations
+
+func main() {
+    # Variable declarations
+    var x = 10
+    var flag = true
+    var pi = 3.14159
+    var ch = 'Z'
+
+    # Constant declarations
+    let MAX = 100
+    let ENABLED = true
+    let E = 2.71828
+    let LETTER = 'A'
+
+    # Declarations with expressions
+    var sum = 1 + 2 + 3
+    var product = 2 * 3 * 4
+    let RESULT = (10 + 5) * 2
+
+    # Mixed declarations
+    var a = 1
+    let B = 2
+    var c = a + B
+
+    0
+}

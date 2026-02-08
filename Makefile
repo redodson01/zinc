@@ -13,14 +13,20 @@ TEST_FAIL_DIR = test/fail
 
 all: $(BUILD_DIR)/zinc
 
-$(BUILD_DIR)/zinc: $(BUILD_DIR)/parser.c $(BUILD_DIR)/scanner.c $(SRC_DIR)/ast.c $(SRC_DIR)/semantic.c $(SRC_DIR)/codegen.c $(SRC_DIR)/main.c
-	$(CC) $(CFLAGS) -I$(SRC_DIR) -I$(BUILD_DIR) -o $@ $^
+$(BUILD_DIR)/zinc: $(BUILD_DIR)/parser.c $(BUILD_DIR)/scanner.c $(SRC_DIR)/ast.c $(SRC_DIR)/semantic.c $(SRC_DIR)/codegen.c $(SRC_DIR)/codegen_expr.c $(SRC_DIR)/codegen_types.c $(SRC_DIR)/main.c $(BUILD_DIR)/zinc_runtime_embed.h
+	$(CC) $(CFLAGS) -I$(SRC_DIR) -I$(BUILD_DIR) -o $@ $(BUILD_DIR)/parser.c $(BUILD_DIR)/scanner.c $(SRC_DIR)/ast.c $(SRC_DIR)/semantic.c $(SRC_DIR)/codegen.c $(SRC_DIR)/codegen_expr.c $(SRC_DIR)/codegen_types.c $(SRC_DIR)/main.c
 
 $(BUILD_DIR)/parser.c $(BUILD_DIR)/parser.h: $(SRC_DIR)/parser.y | $(BUILD_DIR)
 	$(BISON) -d -v -o $(BUILD_DIR)/parser.c $(SRC_DIR)/parser.y
 
 $(BUILD_DIR)/scanner.c $(BUILD_DIR)/scanner.h: $(SRC_DIR)/scanner.l $(BUILD_DIR)/parser.h | $(BUILD_DIR)
 	$(FLEX) --outfile=$(BUILD_DIR)/scanner.c --header-file=$(BUILD_DIR)/scanner.h $(SRC_DIR)/scanner.l
+
+# Embed zinc_runtime.h as a C string for codegen to emit (#7)
+$(BUILD_DIR)/zinc_runtime_embed.h: $(SRC_DIR)/zinc_runtime.h | $(BUILD_DIR)
+	@echo 'static const char zinc_runtime_src[] =' > $@
+	@sed 's/\\/\\\\/g; s/"/\\"/g; s/^/"/; s/$$/\\n"/' $< >> $@
+	@echo ';' >> $@
 
 $(BUILD_DIR):
 	mkdir -p $(BUILD_DIR)

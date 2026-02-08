@@ -1,0 +1,8 @@
+# Test: Invalid expressions (expect 1 error)
+# ERRORS: 1
+
+func main() {
+    var x = * 5
+    var valid = 42
+    return 0
+}
