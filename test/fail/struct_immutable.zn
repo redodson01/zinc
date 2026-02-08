@@ -1,0 +1,13 @@
+# ERRORS: 2
+
+struct Point {
+    var x: int
+    var y: int
+}
+
+func main() {
+    let p = Point(x: 1, y: 2)
+    p.x = 10
+    p.y = 20
+    0
+}
