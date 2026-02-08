@@ -1,0 +1,29 @@
+# Weak references — break reference cycles with the weak keyword
+
+class Node {
+    var value: int
+    weak var next: Node
+}
+
+func main() {
+    var a = Node(value: 1)
+    var b = Node(value: 2)
+
+    # Set up a cycle: a -> b -> a (weak back-reference)
+    a.next = b
+    b.next = a  # weak, so no retain — no cycle
+
+    # Access through the weak reference
+    if b.next? {
+        var val = b.next.value
+    }
+
+    # Weak fields default to nil (NULL)
+    var c = Node(value: 3)
+    if c.next? {
+        # Should not reach here
+        return 1
+    }
+
+    0
+}

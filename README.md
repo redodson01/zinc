@@ -473,7 +473,26 @@ var cfg = Config(width: 800, height: 600)  # debug defaults to false
 
 **Memory management** is automatic. Objects are freed when their reference count reaches zero. No manual memory management is needed.
 
-> **Note:** ARC does not detect reference cycles. Avoid creating objects that reference each other in a cycle, as they will not be freed.
+**Weak references** break reference cycles with the `weak` keyword. A weak field stores a reference without incrementing the reference count, so it won't prevent deallocation:
+
+```
+class Node {
+    var value: int
+    weak var next: Node
+}
+
+var a = Node(value: 1)
+var b = Node(value: 2)
+a.next = b
+b.next = a    # weak — no retain, no cycle
+
+if b.next? {
+    # weak fields are nullable, use ? to check
+    var val = b.next.value
+}
+```
+
+Weak fields default to `nil` (NULL) when not provided. The `weak` keyword can only be used on class-typed fields inside class definitions. Use `?` to check whether a weak reference is non-null.
 
 ### Tuples
 
@@ -575,19 +594,17 @@ var flags = [true, false]     # bool[]
 var empty = int[]             # empty int array
 ```
 
-Arrays can hold any type, including structs, classes, tuples, objects, and nested arrays:
+**Generic arrays** support any element type — structs, classes, tuples, objects, nested arrays, and hashes:
 
 ```
 struct Point { var x: int; var y: int }
 class Node { var value: int }
 
-var points = [Point(x: 1, y: 2), Point(x: 3, y: 4)]
-var nodes = [Node(value: 10), Node(value: 20)]
-var nested = [[1, 2], [3, 4]]
-var empty_pts = Point[]       # typed empty array of structs
+var points = [Point(x: 1, y: 2), Point(x: 3, y: 4)]   # struct[]
+var nodes = [Node(value: 10), Node(value: 20)]           # class[]
+var nested = [[1, 2], [3, 4]]                            # int[][]
+var empty_pts = Point[]                                   # empty Point array
 ```
-
-Struct elements are copied into the array by value. Class elements are reference-counted — the array retains each element.
 
 **Array type annotations** can be used in function parameters:
 
@@ -647,15 +664,15 @@ var bool_ht = [true: 1, false: 0] # bool keys
 var empty = [String: int]          # empty hash
 ```
 
-Hash values can be any type, including structs, classes, and other collections:
+**Generic hash values** support any type — structs, classes, and other compound types:
 
 ```
-var map = ["a": Node(value: 1), "b": Node(value: 2)]
-var pts = [1: Point(x: 5, y: 6), 2: Point(x: 7, y: 8)]
-var empty_map = [String: Node]    # typed empty hash with class values
-```
+class Node { var value: int }
 
-Class-typed values are reference-counted. Struct-typed values are copied by value.
+var map = ["a": Node(value: 100)]            # String -> Node
+var pts = [1: Point(x: 5, y: 6)]            # int -> Point
+var empty_map = [String: Node]               # empty hash with Node values
+```
 
 **Functions** can return hash tables:
 
