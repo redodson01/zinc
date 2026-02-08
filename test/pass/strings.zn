@@ -1,0 +1,174 @@
+# String tests
+
+func test_basic() {
+    let hello = "hello"
+    let world = "world"
+
+    # String concatenation
+    let greeting = hello + " " + world
+    let msg = "result: " + greeting
+
+    # String length
+    let len = hello.length
+    if len != 5 {
+        return 1
+    }
+
+    # Empty string
+    let empty = ""
+    if empty.length != 0 {
+        return 1
+    }
+
+    0
+}
+
+func test_escape_sequences() {
+    let nl = "line1\nline2"
+    let tab = "col1\tcol2"
+    let quote = "she said \"hi\""
+    let backslash = "path\\to\\file"
+    let dollar = "costs \$5"
+
+    0
+}
+
+func test_comparison() {
+    let a = "hello"
+    let b = "hello"
+    let c = "world"
+
+    if a != b {
+        return 1
+    }
+    if a == c {
+        return 1
+    }
+
+    0
+}
+
+func test_indexing() {
+    let s = "hello"
+    let ch = s[0]
+    if ch != 'h' {
+        return 1
+    }
+    let last = s[4]
+    if last != 'o' {
+        return 1
+    }
+    0
+}
+
+func test_interpolation() {
+    let name = "world"
+    let msg = "hello ${name}!"
+    let expected = "hello " + name + "!"
+    if msg != expected {
+        return 1
+    }
+
+    # Interpolation with expressions
+    let x = 42
+    let result = "x is ${x}"
+
+    # Multiple interpolations
+    let a = 1
+    let b = 2
+    let multi = "${a} + ${b} = ${a + b}"
+
+    0
+}
+
+func test_coercion() {
+    # Int to string
+    let n = 42
+    let s1 = "number: " + n
+
+    # Float to string
+    let f = 3.14
+    let s2 = "pi: " + f
+
+    # Bool to string
+    let b = true
+    let s3 = "flag: " + b
+
+    # Char to string
+    let c = 'A'
+    let s4 = "char: " + c
+
+    0
+}
+
+func test_concat_in_loop() {
+    var result = "["
+    var i = 0
+    while i < 3 {
+        if i > 0 {
+            result = result + ", "
+        }
+        result = result + i
+        i = i + 1
+    }
+    result = result + "]"
+
+    0
+}
+
+func test_string_let_binding() {
+    let s = "immutable"
+    # s cannot be reassigned (tested in fail tests)
+    let len = s.length
+    if len != 9 {
+        return 1
+    }
+    0
+}
+
+func test_string_var_binding() {
+    var s = "first"
+    s = "second"
+    if s.length != 6 {
+        return 1
+    }
+    s = s + "!"
+    0
+}
+
+func identity(s: String) {
+    s
+}
+
+func test_string_params() {
+    let s = "hello"
+    let result = identity(s)
+    if result != s {
+        return 1
+    }
+    0
+}
+
+func main() {
+    var r = test_basic()
+    if r != 0 { return r }
+    r = test_escape_sequences()
+    if r != 0 { return r }
+    r = test_comparison()
+    if r != 0 { return r }
+    r = test_indexing()
+    if r != 0 { return r }
+    r = test_interpolation()
+    if r != 0 { return r }
+    r = test_coercion()
+    if r != 0 { return r }
+    r = test_concat_in_loop()
+    if r != 0 { return r }
+    r = test_string_let_binding()
+    if r != 0 { return r }
+    r = test_string_var_binding()
+    if r != 0 { return r }
+    r = test_string_params()
+    if r != 0 { return r }
+    0
+}

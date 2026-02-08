@@ -1,0 +1,8 @@
+# ERRORS: 1
+# Indexing a string with a non-int type
+
+func main() {
+    let s = "hello"
+    let ch = s["bad"]
+    0
+}

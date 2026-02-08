@@ -82,6 +82,7 @@ int main(int argc, char **argv) {
     int parse_result = yyparse(scanner, &root, &nerrs);
 
     yylex_destroy(scanner);
+    free(extra->str_buf);
     free(extra);
     if (input != stdin) fclose(input);
 
