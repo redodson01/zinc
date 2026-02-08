@@ -511,9 +511,36 @@ let t = (10, 20)
 t.0 = 5               # Error: immutable binding
 ```
 
+### Object Literals
+
+Object literals create anonymous, heap-allocated instances with named fields. Like classes, they are reference types managed by ARC.
+
+```
+let point = { x: 10, y: 20 }
+let info = { name: "test", count: 42, active: true }
+
+var px = point.x    # 10
+```
+
+**Object types** can be used in function parameter and return positions:
+
+```
+func sum(p: { x: int, y: int }) {
+    p.x + p.y
+}
+
+func make_point() {
+    { x: 10, y: 20 }
+}
+
+let result = sum({ x: 3, y: 4 })   # 7
+```
+
+Objects with the same field names and types share a single anonymous type. Memory management is automatic, just like classes.
+
 ### Program Structure
 
-A Zinc program is a series of `func`, `struct`, `class`, and tuple definitions. Execution starts at `main`.
+A Zinc program is a series of `func`, `struct`, `class`, tuple, and object literal definitions. Execution starts at `main`.
 
 ```
 func helper(x: int) {

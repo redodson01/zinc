@@ -1,0 +1,26 @@
+# Test: Anonymous object literals and object types
+
+func sum(p: { x: int, y: int }) {
+    p.x + p.y
+}
+
+func make_point() {
+    { x: 10, y: 20 }
+}
+
+func main() {
+    # Object literal
+    let point = { x: 10, y: 20 }
+    var px = point.x
+
+    # Object as function argument
+    let result = sum({ x: 3, y: 4 })
+
+    # Object from function return
+    var p2 = make_point()
+
+    # Object with different field types
+    let info = { name: "test", count: 42, active: true }
+
+    0
+}
