@@ -119,7 +119,7 @@ When the code changes from Phase 1 are backward-compatible — i.e., the modifie
 - **Files that gain features incrementally.** A runtime header that defines array functions can't be overlaid onto a commit that predates arrays. Identify these files during planning and pre-generate the needed variants (see plan file section).
 - **Test annotations.** If the new code changes error counts (e.g., fewer cascading errors from a smarter analyzer), fail test `# ERRORS: N` annotations may need updating at each commit.
 - **Parser changes.** New syntax rules must only appear in commits where the feature exists.
-- **README content.** Each commit's README should document exactly the features present at that point.
+- **README content.** Each commit's README should document exactly the features present at that point. When a later commit adds content to the same section, carry forward the earlier commit's exact wording — don't rephrase it. Inconsistent wording across commits makes it look like the text was written after the fact rather than alongside the feature.
 
 ### The plan file
 
