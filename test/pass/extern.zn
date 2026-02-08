@@ -1,0 +1,23 @@
+# Test: Extern declarations for FFI
+
+extern {
+    # Void function (no params, no return type)
+    func abort()
+
+    # Function with parameters and return type
+    func zn_test_parse(s: String, base: int) -> int
+
+    # Extern variable declarations
+    var zn_test_counter: int
+    let ZN_TEST_CONST: int
+}
+
+func helper(x: int) {
+    x * 2
+}
+
+func main() {
+    var result = helper(21)
+    # Don't actually call extern symbols - just test that extern syntax parses
+    0
+}

@@ -669,6 +669,22 @@ var ht = make_hash()
 
 **Memory management** is automatic via reference counting, just like arrays.
 
+### FFI (Foreign Function Interface)
+
+Extern blocks declare foreign C functions and variables:
+
+```
+extern {
+    func puts(s: String)
+    func exit(code: int)
+    func rand() -> int
+    var errno: int
+    let STDIN_FILENO: int
+}
+```
+
+Functions without a `-> type` annotation are void. The `let` keyword declares read-only extern variables, `var` declares mutable ones.
+
 ### Program Structure
 
 A Zinc program is a series of `func`, `struct`, `class`, tuple, and object literal definitions. Execution starts at `main`.

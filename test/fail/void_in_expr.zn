@@ -1,0 +1,11 @@
+# ERRORS: 1
+# Using void function in expression context
+
+extern {
+    func zn_test_void_func(x: int)
+}
+
+func main() {
+    var x = zn_test_void_func(42)
+    0
+}
