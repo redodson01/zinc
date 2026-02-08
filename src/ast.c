@@ -312,6 +312,14 @@ ASTNode *make_optional_check(ASTNode *operand) {
 ASTNode *make_typed_empty_array(TypeKind elem_type) {
     ASTNode *n = alloc_node(NODE_TYPED_EMPTY_ARRAY);
     n->data.typed_empty_array.elem_type = elem_type;
+    n->data.typed_empty_array.elem_name = NULL;
+    return n;
+}
+
+ASTNode *make_typed_empty_array_named(char *type_name) {
+    ASTNode *n = alloc_node(NODE_TYPED_EMPTY_ARRAY);
+    n->data.typed_empty_array.elem_type = TK_STRUCT;
+    n->data.typed_empty_array.elem_name = type_name;
     return n;
 }
 
@@ -319,6 +327,15 @@ ASTNode *make_typed_empty_hash(TypeKind key_type, TypeKind value_type) {
     ASTNode *n = alloc_node(NODE_TYPED_EMPTY_HASH);
     n->data.typed_empty_hash.key_type = key_type;
     n->data.typed_empty_hash.value_type = value_type;
+    n->data.typed_empty_hash.value_name = NULL;
+    return n;
+}
+
+ASTNode *make_typed_empty_hash_named(TypeKind key_type, char *value_name) {
+    ASTNode *n = alloc_node(NODE_TYPED_EMPTY_HASH);
+    n->data.typed_empty_hash.key_type = key_type;
+    n->data.typed_empty_hash.value_type = TK_STRUCT;
+    n->data.typed_empty_hash.value_name = value_name;
     return n;
 }
 
@@ -342,6 +359,16 @@ ASTNode *make_struct_field(char *name, TypeInfo *type_info, ASTNode *default_val
     n->data.struct_field.type_info = type_info;
     n->data.struct_field.default_value = default_value;
     n->data.struct_field.is_const = is_const;
+    return n;
+}
+
+ASTNode *make_weak_struct_field(char *name, TypeInfo *type_info, int is_const) {
+    ASTNode *n = alloc_node(NODE_STRUCT_FIELD);
+    n->data.struct_field.name = name;
+    n->data.struct_field.type_info = type_info;
+    n->data.struct_field.default_value = NULL;
+    n->data.struct_field.is_const = is_const;
+    n->data.struct_field.is_weak = 1;
     return n;
 }
 
@@ -839,7 +866,10 @@ void free_ast(ASTNode *node) {
         free(node->data.extern_let.type_info);
         break;
     case NODE_TYPED_EMPTY_ARRAY:
+        free(node->data.typed_empty_array.elem_name);
+        break;
     case NODE_TYPED_EMPTY_HASH:
+        free(node->data.typed_empty_hash.value_name);
         break;
     }
     type_free(node->resolved_type);

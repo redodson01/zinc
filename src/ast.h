@@ -141,7 +141,7 @@ struct ASTNode {
         struct { ASTNode *object; ASTNode *index; } index_access;
         struct { ASTNode *operand; } optional_check;
         struct { char *name; NodeList *fields; } struct_def;
-        struct { char *name; TypeInfo *type_info; ASTNode *default_value; int is_const; } struct_field;
+        struct { char *name; TypeInfo *type_info; ASTNode *default_value; int is_const; int is_weak; } struct_field;
         struct { char *name; NodeList *args; } struct_init;
         struct { char *name; ASTNode *value; } named_arg;
         struct { NodeList *elements; } tuple;
@@ -154,8 +154,8 @@ struct ASTNode {
         struct { char *name; NodeList *params; TypeInfo *return_type; } extern_func;
         struct { char *name; TypeInfo *type_info; } extern_var;
         struct { char *name; TypeInfo *type_info; } extern_let;
-        struct { TypeKind elem_type; } typed_empty_array;
-        struct { TypeKind key_type; TypeKind value_type; } typed_empty_hash;
+        struct { TypeKind elem_type; char *elem_name; } typed_empty_array;
+        struct { TypeKind key_type; TypeKind value_type; char *value_name; } typed_empty_hash;
     } data;
 };
 
@@ -201,10 +201,13 @@ ASTNode *make_extern_var(char *name, TypeInfo *type_info);
 ASTNode *make_extern_let(char *name, TypeInfo *type_info);
 ASTNode *make_optional_check(ASTNode *operand);
 ASTNode *make_typed_empty_array(TypeKind elem_type);
+ASTNode *make_typed_empty_array_named(char *type_name);
 ASTNode *make_typed_empty_hash(TypeKind key_type, TypeKind value_type);
+ASTNode *make_typed_empty_hash_named(TypeKind key_type, char *value_name);
 ASTNode *make_struct_def(char *name, NodeList *fields);
 ASTNode *make_class_def(char *name, NodeList *fields);
 ASTNode *make_struct_field(char *name, TypeInfo *type_info, ASTNode *default_value, int is_const);
+ASTNode *make_weak_struct_field(char *name, TypeInfo *type_info, int is_const);
 ASTNode *make_named_arg(char *name, ASTNode *value);
 ASTNode *make_tuple(NodeList *elements);
 ASTNode *make_object_literal(NodeList *fields);

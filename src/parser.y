@@ -17,7 +17,7 @@
 %define api.pure full
 %locations
 %define parse.error verbose
-%expect 7  /* Shift/reduce conflicts: dangling else (3) + expression ambiguities (4) */
+%expect 9  /* Shift/reduce conflicts: dangling else (3) + expression ambiguities (4) + array (2) */
 
 %param { yyscan_t scanner }
 %parse-param { ASTNode **result }
@@ -34,6 +34,7 @@
     int bval;
     char cval;
     char *sval;
+    int tkind;
     ASTNode *node;
     NodeList *list;
     TypeInfo *type;
@@ -50,7 +51,7 @@
 %token IF UNLESS ELSE
 %token WHILE UNTIL FOR
 %token BREAK CONTINUE
-%token FUNC RETURN STRUCT CLASS
+%token FUNC RETURN STRUCT CLASS EXTERN ARROW WEAK
 %token EQ NE LE GE AND OR
 %token PLUS_ASSIGN MINUS_ASSIGN STAR_ASSIGN SLASH_ASSIGN PERCENT_ASSIGN
 %token INCREMENT DECREMENT
@@ -61,13 +62,14 @@
 %type <node> program expr primary block interp_string
 %type <node> if_expr unless_expr while_expr until_expr for_expr
 %type <node> func_def param for_init for_update
-%type <node> struct_def class_def struct_field arg_or_named
+%type <node> struct_def class_def struct_field arg_or_named extern_block extern_decl
 %type <node> interp_parts
-%type <list> top_level_list expr_list param_list arg_list struct_field_list
-%type <list> tuple_rest named_tuple_rest object_field_list
+%type <list> top_level_list expr_list param_list arg_list struct_field_list extern_decl_list
+%type <list> tuple_rest named_tuple_rest object_field_list array_elems hash_pairs
 
 %type <type> type_spec
 %type <type_field> object_type_fields object_type_field
+%type <tkind> type_kw
 
 %right BREAK CONTINUE RETURN
 %right ASSIGN PLUS_ASSIGN MINUS_ASSIGN STAR_ASSIGN SLASH_ASSIGN PERCENT_ASSIGN
@@ -91,14 +93,37 @@ top_level_list:
     func_def                        { $$ = make_list($1); }
     | struct_def                    { $$ = make_list($1); }
     | class_def                     { $$ = make_list($1); }
+    | extern_block                  { $$ = make_list($1); }
     | top_level_list func_def       { $$ = list_append($1, $2); }
     | top_level_list struct_def     { $$ = list_append($1, $2); }
     | top_level_list class_def      { $$ = list_append($1, $2); }
+    | top_level_list extern_block   { $$ = list_append($1, $2); }
     ;
 
 func_def:
     FUNC IDENTIFIER LPAREN param_list RPAREN block
         { $$ = make_func_def($2, $4, $6); $$->line = @1.first_line; }
+    ;
+
+/* Extern block for FFI declarations */
+extern_block:
+    EXTERN LBRACE extern_decl_list RBRACE { $$ = make_extern_block($3); $$->line = @1.first_line; }
+    ;
+
+extern_decl_list:
+    extern_decl                     { $$ = make_list($1); }
+    | extern_decl_list extern_decl  { $$ = list_append($1, $2); }
+    ;
+
+extern_decl:
+    LET IDENTIFIER COLON type_spec
+        { $$ = make_extern_let($2, $4); $$->line = @1.first_line; }
+    | VAR IDENTIFIER COLON type_spec
+        { $$ = make_extern_var($2, $4); $$->line = @1.first_line; }
+    | FUNC IDENTIFIER LPAREN param_list RPAREN
+        { $$ = make_extern_func($2, $4, NULL); $$->line = @1.first_line; }
+    | FUNC IDENTIFIER LPAREN param_list RPAREN ARROW type_spec
+        { $$ = make_extern_func($2, $4, $7); $$->line = @1.first_line; }
     ;
 
 param_list:
@@ -119,6 +144,7 @@ type_spec:
     | TYPE_CHAR                         { $$ = make_type_info(TK_CHAR); }
     | IDENTIFIER                        { $$ = make_struct_type_info($1); }
     | LBRACE object_type_fields RBRACE  { $$ = make_object_type_info($2); }
+    | type_spec LBRACKET RBRACKET       { $$ = make_type_info(TK_ARRAY); }
     | type_spec QUESTION                { $$ = make_optional_type($1); }
     ;
 
@@ -129,6 +155,14 @@ object_type_fields:
 
 object_type_field:
     IDENTIFIER COLON type_spec  { $$ = make_type_info_field($1, $3); }
+
+type_kw:
+    TYPE_INT                            { $$ = TK_INT; }
+    | TYPE_FLOAT                        { $$ = TK_FLOAT; }
+    | TYPE_STRING                       { $$ = TK_STRING; }
+    | TYPE_BOOL                         { $$ = TK_BOOL; }
+    | TYPE_CHAR                         { $$ = TK_CHAR; }
+    ;
 
 block:
     LBRACE expr_list RBRACE             { $$ = make_block($2); }
@@ -174,7 +208,13 @@ expr:
     | MINUS expr %prec UMINUS           { $$ = make_unaryop("-", $2); $$->line = @1.first_line; }
     | PLUS expr %prec UPLUS             { $$ = make_unaryop("+", $2); $$->line = @1.first_line; }
     | NOT expr                          { $$ = make_unaryop("!", $2); $$->line = @1.first_line; }
-    /* Index access */
+    /* Typed empty array of user type: Point[] */
+    | expr LBRACKET RBRACKET            { if ($1->type == NODE_IDENT) {
+                                              $$ = make_typed_empty_array_named(strdup($1->data.ident.name));
+                                              free_ast($1); $$->line = @1.first_line;
+                                          } else { $$ = $1; } }
+    /* Index access and assignment */
+    | expr LBRACKET expr RBRACKET ASSIGN expr { $$ = make_index_assign($1, $3, $6); $$->line = @$.first_line; }
     | expr LBRACKET expr RBRACKET       { $$ = make_index_access($1, $3); $$->line = @$.first_line; }
     /* Field access */
     | expr DOT IDENTIFIER               { $$ = make_field_access($1, $3); $$->line = @$.first_line; }
@@ -284,6 +324,10 @@ struct_field:
         { $$ = make_struct_field($2, NULL, $4, 1); $$->line = @1.first_line; }
     | VAR IDENTIFIER ASSIGN expr
         { $$ = make_struct_field($2, NULL, $4, 0); $$->line = @1.first_line; }
+    | WEAK VAR IDENTIFIER COLON type_spec
+        { $$ = make_weak_struct_field($3, $5, 0); $$->line = @1.first_line; }
+    | WEAK LET IDENTIFIER COLON type_spec
+        { $$ = make_weak_struct_field($3, $5, 1); $$->line = @1.first_line; }
     ;
 
 arg_list:
@@ -323,6 +367,22 @@ primary:
     | CHAR_LIT                          { $$ = make_char($1); $$->line = @1.first_line; }
     | IDENTIFIER                        { $$ = make_ident($1); $$->line = @1.first_line; }
     | interp_string                     { $$ = $1; }
+    | type_kw LBRACKET RBRACKET         { $$ = make_typed_empty_array($1); $$->line = @1.first_line; }
+    | LBRACKET array_elems RBRACKET     { $$ = make_array_literal($2); $$->line = @1.first_line; }
+    | LBRACKET type_kw COLON type_kw RBRACKET
+                                        { $$ = make_typed_empty_hash($2, $4); $$->line = @1.first_line; }
+    | LBRACKET type_kw COLON IDENTIFIER RBRACKET
+                                        { $$ = make_typed_empty_hash_named($2, $4); $$->line = @1.first_line; }
+    | LBRACKET hash_pairs RBRACKET      { $$ = make_hash_literal($2); $$->line = @1.first_line; }
+    ;
+
+array_elems:
+    expr                                { $$ = make_list($1); }
+    | array_elems COMMA expr            { $$ = list_append($1, $3); }
+
+hash_pairs:
+    expr COLON expr                         { $$ = make_list(make_hash_pair($1, $3)); }
+    | hash_pairs COMMA expr COLON expr      { $$ = list_append($1, make_hash_pair($3, $5)); }
     ;
 
 /* String interpolation: "hello ${name}!" desugars to ("hello " + name) + "!" */

@@ -1,0 +1,89 @@
+# Test: Arrays with ARC
+
+struct ArrayPoint {
+    var x: int
+    var y: int
+}
+
+class ArrayNode {
+    var value: int
+}
+
+func make_array() {
+    [10, 20, 30]
+}
+
+func make_points() {
+    [ArrayPoint(x: 1, y: 2), ArrayPoint(x: 3, y: 4)]
+}
+
+func main() {
+    # Array literal
+    var arr = [1, 2, 3, 4, 5]
+
+    # Index access
+    let first = arr[0]
+    let third = arr[2]
+
+    # Array .length
+    let len = arr.length
+
+    # Index assignment
+    arr[0] = 99
+
+    # Empty array (typed)
+    var empty = int[]
+
+    # Array from function return
+    var arr2 = make_array()
+    let val = arr2[1]
+
+    # Array reassignment
+    arr = [10, 20]
+
+    # Let binding with array
+    let fixed = [100, 200, 300]
+    let f0 = fixed[0]
+
+    # Bool array
+    var flags = [true, false, true]
+    let flag = flags[0]
+
+    # Float array
+    var floats = [1.5, 2.5, 3.5]
+    let f = floats[1]
+
+    # Char array
+    var chars = ['a', 'b', 'c']
+    let ch = chars[2]
+
+    # String array
+    var names = ["hello", "world"]
+    let name = names[0]
+    let slen = names.length
+
+    # Array of structs (value types, heap-copied into collection)
+    var points = [ArrayPoint(x: 1, y: 2), ArrayPoint(x: 3, y: 4)]
+    let p0 = points[0]
+    let px = p0.x
+
+    # Array of classes (reference types, ARC managed)
+    var nodes = [ArrayNode(value: 10), ArrayNode(value: 20)]
+    let n0 = nodes[0]
+    let nv = n0.value
+
+    # Nested arrays
+    var nested = [[1, 2], [3, 4]]
+    let inner = nested[0]
+    let ival = inner[1]
+
+    # Typed empty array of user type
+    var empty_pts = ArrayPoint[]
+    let elen = empty_pts.length
+
+    # Array of structs from function return
+    var pts = make_points()
+    let rp = pts[1]
+
+    0
+}

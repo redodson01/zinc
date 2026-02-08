@@ -342,11 +342,14 @@ void generate(CodegenContext *ctx, ASTNode *root) {
     cg_emit_header(ctx, "typedef struct { int32_t _rc; int32_t _len; char _data[]; } ZnString;\n\n");
 
     /* ZnTag enum and ZnValue/ZnArray/ZnHash typedefs */
-    cg_emit_header(ctx, "typedef enum { ZN_TAG_INT = 0, ZN_TAG_FLOAT = 1, ZN_TAG_BOOL = 2, ZN_TAG_CHAR = 3, ZN_TAG_STRING = 4 } ZnTag;\n");
+    cg_emit_header(ctx, "typedef enum { ZN_TAG_INT = 0, ZN_TAG_FLOAT = 1, ZN_TAG_BOOL = 2, ZN_TAG_CHAR = 3, ZN_TAG_STRING = 4, ZN_TAG_ARRAY = 5, ZN_TAG_HASH = 6, ZN_TAG_REF = 7, ZN_TAG_VAL = 8 } ZnTag;\n");
     cg_emit_header(ctx, "typedef struct { ZnTag tag; union { int64_t i; double f; bool b; char c; void *ptr; } as; } ZnValue;\n");
-    cg_emit_header(ctx, "typedef struct { int _rc; int _len; int _cap; ZnValue *_data; } ZnArray;\n");
+    cg_emit_header(ctx, "typedef void (*ZnElemFn)(void*);\n");
+    cg_emit_header(ctx, "typedef unsigned int (*ZnHashFn)(ZnValue);\n");
+    cg_emit_header(ctx, "typedef bool (*ZnEqFn)(ZnValue, ZnValue);\n");
+    cg_emit_header(ctx, "typedef struct { int _rc; int32_t _len; int32_t _cap; ZnValue *_data; ZnElemFn _elem_retain; ZnElemFn _elem_release; ZnHashFn _elem_hashcode; ZnEqFn _elem_equals; } ZnArray;\n");
     cg_emit_header(ctx, "typedef struct ZnHashEntry { ZnValue key; ZnValue value; struct ZnHashEntry *next; } ZnHashEntry;\n");
-    cg_emit_header(ctx, "typedef struct { int _rc; int _len; int _cap; ZnHashEntry **_buckets; } ZnHash;\n\n");
+    cg_emit_header(ctx, "typedef struct { int _rc; int32_t _len; int32_t _cap; ZnHashEntry **_buckets; ZnElemFn _key_retain; ZnElemFn _key_release; ZnHashFn _key_hashcode; ZnEqFn _key_equals; ZnElemFn _val_retain; ZnElemFn _val_release; } ZnHash;\n\n");
 
     /* Optional wrapper types for value types */
     cg_emit_header(ctx, "typedef struct { bool _has; int64_t _val; } ZnOpt_int;\n");
@@ -384,6 +387,9 @@ void generate(CodegenContext *ctx, ASTNode *root) {
 
     /* Generate anonymous object typedefs + ARC functions */
     gen_object_typedefs(ctx);
+
+    /* Generate collection helper functions (retain/release wrappers, hashcode, equals) */
+    gen_collection_helpers(ctx);
 
     /* Collect string literals and emit static structs */
     collect_string_literals(ctx, root);

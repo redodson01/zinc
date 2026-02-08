@@ -9,6 +9,7 @@ typedef struct StructFieldDef {
     Type *type;                /* resolved type (kind, name for structs) */
     int has_default;
     int is_const;              /* 1 for let fields, 0 for var fields */
+    int is_weak;               /* 1 for weak fields (skip retain/release) */
     ASTNode *default_value;    /* pointer into AST, not owned */
     struct StructFieldDef *next;
 } StructFieldDef;

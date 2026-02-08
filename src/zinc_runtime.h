@@ -54,3 +54,105 @@ static ZnString *__zn_str_from_bool(bool v) {
 static ZnString *__zn_str_from_char(char c) {
     return __zn_str_alloc(&c, 1);
 }
+
+/* --- ZnValue boxing/unboxing --- */
+
+static ZnValue __zn_val_int(int64_t v) { ZnValue r; r.tag = ZN_TAG_INT; r.as.i = v; return r; }
+static ZnValue __zn_val_float(double v) { ZnValue r; r.tag = ZN_TAG_FLOAT; r.as.f = v; return r; }
+static ZnValue __zn_val_bool(bool v) { ZnValue r; r.tag = ZN_TAG_BOOL; r.as.b = v; return r; }
+static ZnValue __zn_val_char(char v) { ZnValue r; r.tag = ZN_TAG_CHAR; r.as.c = v; return r; }
+static ZnValue __zn_val_string(ZnString *v) { ZnValue r; r.tag = ZN_TAG_STRING; r.as.ptr = v; return r; }
+static ZnValue __zn_val_array(ZnArray *v) { ZnValue r; r.tag = ZN_TAG_ARRAY; r.as.ptr = v; return r; }
+static ZnValue __zn_val_hash(ZnHash *v) { ZnValue r; r.tag = ZN_TAG_HASH; r.as.ptr = v; return r; }
+static ZnValue __zn_val_ref(void *v) { ZnValue r; r.tag = ZN_TAG_REF; r.as.ptr = v; return r; }
+static ZnValue __zn_val_val(void *v) { ZnValue r; r.tag = ZN_TAG_VAL; r.as.ptr = v; return r; }
+
+static int64_t __zn_val_as_int(ZnValue v) { return v.as.i; }
+static double __zn_val_as_float(ZnValue v) { return v.as.f; }
+static bool __zn_val_as_bool(ZnValue v) { return v.as.b; }
+static char __zn_val_as_char(ZnValue v) { return v.as.c; }
+static ZnString *__zn_val_as_string(ZnValue v) { return (ZnString*)v.as.ptr; }
+
+/* --- Default hashcode/equals for primitives+strings --- */
+
+static unsigned int __zn_val_hashcode(ZnValue v) {
+    switch (v.tag) {
+    case ZN_TAG_INT: { uint64_t x = (uint64_t)v.as.i; return (unsigned int)(x ^ (x >> 32)); }
+    case ZN_TAG_FLOAT: { union { double d; uint64_t u; } cv; cv.d = v.as.f; return (unsigned int)(cv.u ^ (cv.u >> 32)); }
+    case ZN_TAG_BOOL: return v.as.b ? 1 : 0;
+    case ZN_TAG_CHAR: return (unsigned int)v.as.c;
+    case ZN_TAG_STRING: { ZnString *s = (ZnString*)v.as.ptr; unsigned int h = 5381; for (int i = 0; i < s->_len; i++) h = h * 33 + (unsigned char)s->_data[i]; return h; }
+    default: return 0;
+    }
+}
+
+static bool __zn_val_eq(ZnValue a, ZnValue b) {
+    if (a.tag != b.tag) return false;
+    switch (a.tag) {
+    case ZN_TAG_INT: return a.as.i == b.as.i;
+    case ZN_TAG_FLOAT: return a.as.f == b.as.f;
+    case ZN_TAG_BOOL: return a.as.b == b.as.b;
+    case ZN_TAG_CHAR: return a.as.c == b.as.c;
+    case ZN_TAG_STRING: { ZnString *sa = (ZnString*)a.as.ptr, *sb = (ZnString*)b.as.ptr; return sa->_len == sb->_len && memcmp(sa->_data, sb->_data, sa->_len) == 0; }
+    default: return a.as.ptr == b.as.ptr;
+    }
+}
+
+static unsigned int __zn_default_hashcode(ZnValue v) { return __zn_val_hashcode(v); }
+static bool __zn_default_equals(ZnValue a, ZnValue b) { return __zn_val_eq(a, b); }
+
+/* --- Array runtime (callback-based ARC) --- */
+
+static ZnArray *__zn_arr_alloc(int cap, ZnElemFn retain, ZnElemFn release, ZnHashFn hashcode, ZnEqFn equals) {
+    ZnArray *a = malloc(sizeof(ZnArray));
+    a->_rc = 1; a->_len = 0; a->_cap = cap;
+    a->_data = cap > 0 ? calloc(cap, sizeof(ZnValue)) : NULL;
+    a->_elem_retain = retain;
+    a->_elem_release = release;
+    a->_elem_hashcode = hashcode;
+    a->_elem_equals = equals;
+    return a;
+}
+
+static void __zn_arr_retain(ZnArray *a) { if (a) a->_rc++; }
+
+static void __zn_arr_release(ZnArray *a) {
+    if (!a) return;
+    if (--(a->_rc) == 0) {
+        if (a->_elem_release) {
+            for (int i = 0; i < a->_len; i++) {
+                if (a->_data[i].as.ptr) a->_elem_release(a->_data[i].as.ptr);
+            }
+        }
+        free(a->_data);
+        free(a);
+    }
+}
+
+static void __zn_arr_push(ZnArray *a, ZnValue v) {
+    if (a->_len >= a->_cap) {
+        a->_cap = a->_cap > 0 ? a->_cap * 2 : 4;
+        a->_data = realloc(a->_data, a->_cap * sizeof(ZnValue));
+    }
+    if (a->_elem_retain && v.as.ptr) a->_elem_retain(v.as.ptr);
+    a->_data[a->_len++] = v;
+}
+
+static ZnValue __zn_arr_get(ZnArray *a, int64_t idx) {
+    if (idx < 0 || idx >= a->_len) { fprintf(stderr, "Array index out of bounds: %lld (length %d)\n", (long long)idx, a->_len); exit(1); }
+    return a->_data[idx];
+}
+
+static void __zn_arr_set(ZnArray *a, int64_t idx, ZnValue v) {
+    if (idx < 0 || idx >= a->_len) { fprintf(stderr, "Array index out of bounds: %lld (length %d)\n", (long long)idx, a->_len); exit(1); }
+    ZnValue old = a->_data[idx];
+    if (a->_elem_release && old.as.ptr) a->_elem_release(old.as.ptr);
+    if (a->_elem_retain && v.as.ptr) a->_elem_retain(v.as.ptr);
+    a->_data[idx] = v;
+}
+
+/* Wrapper to cast __zn_str_retain/release for use as ZnElemFn */
+static void __zn_str_retain_v(void *p) { __zn_str_retain((ZnString*)p); }
+static void __zn_str_release_v(void *p) { __zn_str_release((ZnString*)p); }
+static void __zn_arr_retain_v(void *p) { __zn_arr_retain((ZnArray*)p); }
+static void __zn_arr_release_v(void *p) { __zn_arr_release((ZnArray*)p); }

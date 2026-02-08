@@ -538,6 +538,77 @@ let result = sum({ x: 3, y: 4 })   # 7
 
 Objects with the same field names and types share a single anonymous type. Memory management is automatic, just like classes.
 
+### Arrays
+
+Arrays are dynamic, reference-counted collections of values. All elements must have the same type.
+
+```
+var nums = [1, 2, 3, 4, 5]
+var empty = int[]
+```
+
+**Element access** uses bracket notation with zero-based indexing:
+
+```
+let first = nums[0]     # 1
+let third = nums[2]     # 3
+```
+
+**Length** is available as a property:
+
+```
+let len = nums.length    # 5
+```
+
+**Index assignment** modifies elements in place:
+
+```
+nums[0] = 99
+```
+
+**Element types** are inferred from the first element. All elements must match. Empty arrays require an explicit element type:
+
+```
+var ints = [1, 2, 3]          # int[]
+var strs = ["hello", "world"] # String[]
+var flags = [true, false]     # bool[]
+var empty = int[]             # empty int array
+```
+
+**Generic arrays** support any element type — structs, classes, tuples, objects, nested arrays, and hashes:
+
+```
+struct Point { var x: int; var y: int }
+class Node { var value: int }
+
+var points = [Point(x: 1, y: 2), Point(x: 3, y: 4)]
+var nodes = [Node(value: 10), Node(value: 20)]
+var nested = [[1, 2], [3, 4]]
+var empty_pts = Point[]       # typed empty array of structs
+```
+
+Struct elements are copied into the array by value. Class elements are reference-counted — the array retains each element.
+
+**Array type annotations** can be used in function parameters:
+
+```
+func first(nums: int[]) {
+    nums[0]
+}
+```
+
+**Functions** can return arrays:
+
+```
+func make_array() {
+    [10, 20, 30]
+}
+
+var arr = make_array()
+```
+
+**Memory management** is automatic via reference counting. Arrays are freed when their last reference goes away. Bounds checking is performed at runtime — out-of-bounds access terminates the program with an error message.
+
 ### Program Structure
 
 A Zinc program is a series of `func`, `struct`, `class`, tuple, and object literal definitions. Execution starts at `main`.
