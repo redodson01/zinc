@@ -63,6 +63,7 @@
 %type <node> struct_def class_def struct_field arg_or_named
 %type <node> interp_parts
 %type <list> top_level_list expr_list param_list arg_list struct_field_list
+%type <list> tuple_rest named_tuple_rest
 
 %type <type> type_spec
 
@@ -166,6 +167,9 @@ expr:
     | expr LBRACKET expr RBRACKET       { $$ = make_index_access($1, $3); $$->line = @$.first_line; }
     /* Field access */
     | expr DOT IDENTIFIER               { $$ = make_field_access($1, $3); $$->line = @$.first_line; }
+    /* Dot-integer access for tuples: t.0 → t._0 */
+    | expr DOT INT_LIT                  { char buf[32]; snprintf(buf, sizeof(buf), "_%lld", (long long)$3);
+                                          $$ = make_field_access($1, strdup(buf)); $$->line = @$.first_line; }
     /* Field assignment */
     | expr DOT IDENTIFIER ASSIGN expr   { $$ = make_field_assign($1, $3, $5); $$->line = @$.first_line; }
     /* Optional check */
@@ -174,6 +178,14 @@ expr:
     | IDENTIFIER LPAREN arg_list RPAREN { $$ = make_call($1, $3); $$->line = @1.first_line; }
     /* Parenthesized expression */
     | LPAREN expr RPAREN                { $$ = $2; }
+    /* Tuple literals */
+    | LPAREN expr COMMA tuple_rest RPAREN
+        { NodeList *elems = make_list($2); elems->tail->next = $4; elems->tail = $4->tail;
+          $$ = make_tuple(elems); $$->line = @1.first_line; }
+    | LPAREN IDENTIFIER COLON expr COMMA named_tuple_rest RPAREN
+        { NodeList *elems = make_list(make_named_arg($2, $4));
+          elems->tail->next = $6; elems->tail = $6->tail;
+          $$ = make_tuple(elems); $$->line = @1.first_line; }
     /* Control flow expressions */
     | if_expr                           { $$ = $1; }
     | unless_expr                       { $$ = $1; }
@@ -270,6 +282,17 @@ arg_list:
 arg_or_named:
     expr                                { $$ = $1; }
     | IDENTIFIER COLON expr             { $$ = make_named_arg($1, $3); }
+    ;
+
+tuple_rest:
+    expr                                { $$ = make_list($1); }
+    | tuple_rest COMMA expr             { $$ = list_append($1, $3); }
+    ;
+
+named_tuple_rest:
+    IDENTIFIER COLON expr               { $$ = make_list(make_named_arg($1, $3)); }
+    | named_tuple_rest COMMA IDENTIFIER COLON expr
+                                        { $$ = list_append($1, make_named_arg($3, $5)); }
     ;
 
 primary:
