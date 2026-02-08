@@ -1,0 +1,53 @@
+# Optional type tests
+
+func main() {
+    # If-without-else produces optional int
+    let x = 10
+    let maybe_val = if x > 5 { 42 }
+
+    # Type narrowing: check with ? then use narrowed value
+    var result = 0
+    if maybe_val? {
+        result = maybe_val
+    }
+
+    # If-without-else when condition is false (no outcome)
+    let no_val = if x < 0 { 99 }
+
+    # Conditional while loop produces optional
+    var count = 0
+    let loop_result = while count < 3 {
+        count += 1
+        if count == 2 { break 200 }
+    }
+
+    # Check optional from loop
+    if loop_result? {
+        result = loop_result
+    }
+
+    # Infinite while loop (non-optional)
+    let infinite_result = while true {
+        break 100
+    }
+
+    # For loop as expression produces optional
+    let for_result = for var i = 0; i < 10; i += 1 {
+        if i == 7 { break i }
+    }
+
+    # Check optional from for loop
+    if for_result? {
+        result = for_result
+    }
+
+    # Optional from string expression (reference type)
+    let maybe_str = if x > 0 { "hello" }
+
+    # Check reference type optional with ?
+    if maybe_str? {
+        let s = maybe_str
+    }
+
+    0
+}
