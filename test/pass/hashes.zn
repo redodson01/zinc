@@ -44,6 +44,14 @@ func main() {
     var bool_ht = [true: 1, false: 0]
     let tv = bool_ht[true]
 
+    # Float keys
+    var float_ht = [1.5: "one-half", 2.5: "two-half"]
+    let flv = float_ht[1.5]
+
+    # Char keys
+    var char_ht = ['a': 1, 'b': 2, 'c': 3]
+    let chv = char_ht['a']
+
     # Reassignment with ARC
     var h = ["x": 100]
     h = ["y": 200]

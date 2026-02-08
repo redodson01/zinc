@@ -1,0 +1,23 @@
+# ERRORS: 3
+# Tests: field access on non-struct type, struct has no field, field assignment on non-struct type
+
+struct Point {
+    var x: int
+    var y: int
+}
+
+func main() {
+    var n = 42
+
+    # Error 1: field access on non-struct type
+    var a = n.x
+
+    # Error 2: struct has no field
+    var p = Point(x: 1, y: 2)
+    var b = p.z
+
+    # Error 3: field assignment on non-struct type
+    n.x = 10
+
+    0
+}

@@ -1,0 +1,8 @@
+# ERRORS: 1
+# Test: strings are immutable (cannot assign via index)
+
+func main() {
+    var s = "hello"
+    s[0] = 'H'
+    0
+}
