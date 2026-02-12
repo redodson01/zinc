@@ -4,6 +4,10 @@
 #include <stdarg.h>
 #include "semantic.h"
 
+static int is_ref_type(TypeKind t) {
+    return t == TK_STRING;
+}
+
 /* Variadic error reporting with line numbers */
 static void semantic_errorf(SemanticContext *ctx, int line, const char *fmt, ...) {
     fprintf(stderr, "Semantic error at line %d: ", line);
@@ -138,6 +142,7 @@ static const char *type_kind_name(TypeKind t) {
     switch (t) {
     case TK_INT:    return "int";
     case TK_FLOAT:  return "float";
+    case TK_STRING: return "string";
     case TK_BOOL:   return "bool";
     case TK_CHAR:   return "char";
     case TK_VOID:   return "void";
@@ -160,6 +165,7 @@ Type *get_expr_type(SemanticContext *ctx, ASTNode *expr) {
     switch (expr->type) {
     case NODE_INT:    result = TK_INT; break;
     case NODE_FLOAT:  result = TK_FLOAT; break;
+    case NODE_STRING: result = TK_STRING; break;
     case NODE_BOOL:   result = TK_BOOL; break;
     case NODE_CHAR:   result = TK_CHAR; break;
     case NODE_IDENT: {
@@ -190,6 +196,11 @@ Type *get_expr_type(SemanticContext *ctx, ASTNode *expr) {
         else if (op == OP_AND || op == OP_OR) {
             result = TK_BOOL;
         }
+        /* String concatenation: if either side is string, result is string (auto-coercion) */
+        else if (op == OP_ADD && (left == TK_STRING || right == TK_STRING)) {
+            result = TK_STRING;
+            expr->is_fresh_alloc = 1;
+        }
         /* Arithmetic: if either is float, result is float */
         else if (left == TK_FLOAT || right == TK_FLOAT) {
             result = TK_FLOAT;
@@ -208,6 +219,11 @@ Type *get_expr_type(SemanticContext *ctx, ASTNode *expr) {
         break;
     }
     case NODE_CALL: {
+        /* Built-in print already resolved by analyze_expr */
+        if (strcmp(expr->data.call.name, "print") == 0) {
+            result = TK_VOID;
+            break;
+        }
         Symbol *sym = lookup(ctx, expr->data.call.name);
         if (!sym) {
             semantic_errorf(ctx, expr->line, "undefined function '%s'",
@@ -220,6 +236,9 @@ Type *get_expr_type(SemanticContext *ctx, ASTNode *expr) {
         } else {
             type_free(expr->resolved_type);
             expr->resolved_type = type_clone(sym->type);
+            TypeKind rk = sym->type->kind;
+            if (rk == TK_STRING)
+                expr->is_fresh_alloc = 1;
             return expr->resolved_type;
         }
         break;
@@ -232,6 +251,14 @@ Type *get_expr_type(SemanticContext *ctx, ASTNode *expr) {
         break;
     case NODE_INCDEC:
         result = TK_INT;
+        break;
+    case NODE_FIELD_ACCESS:
+        /* resolved_type already set during analyze_expr */
+        result = expr->resolved_type ? expr->resolved_type->kind : TK_UNKNOWN;
+        break;
+    case NODE_INDEX:
+        /* resolved_type already set during analyze_expr */
+        result = expr->resolved_type ? expr->resolved_type->kind : TK_UNKNOWN;
         break;
     case NODE_IF:
     case NODE_WHILE:
@@ -269,6 +296,12 @@ static void check_lvalue(SemanticContext *ctx, ASTNode *tgt, int line, const cha
             semantic_errorf(ctx, line, "undefined variable '%s'", tgt->data.ident.name);
         } else if (sym->is_const) {
             semantic_errorf(ctx, line, "cannot %s constant '%s'", verb, tgt->data.ident.name);
+        }
+    } else if (tgt->type == NODE_INDEX) {
+        TypeKind obj_type = tgt->data.index_access.object->resolved_type
+            ? tgt->data.index_access.object->resolved_type->kind : TK_UNKNOWN;
+        if (obj_type == TK_STRING) {
+            semantic_errorf(ctx, line, "strings are immutable");
         }
     } else {
         semantic_errorf(ctx, line, "invalid assignment target");
@@ -313,8 +346,30 @@ static void analyze_expr(SemanticContext *ctx, ASTNode *expr) {
     }
     case NODE_CALL: {
         const char *name = expr->data.call.name;
-        Symbol *sym = lookup(ctx, name);
 
+        /* Built-in print function */
+        if (strcmp(name, "print") == 0) {
+            int argc = 0;
+            for (NodeList *arg = expr->data.call.args; arg; arg = arg->next) {
+                analyze_expr(ctx, arg->node);
+                get_expr_type(ctx, arg->node);
+                argc++;
+            }
+            if (argc != 1) {
+                semantic_errorf(ctx, expr->line, "print expects exactly 1 argument, got %d", argc);
+            } else {
+                ASTNode *arg = expr->data.call.args->node;
+                TypeKind ak = arg->resolved_type ? arg->resolved_type->kind : TK_UNKNOWN;
+                if (ak != TK_STRING && ak != TK_UNKNOWN) {
+                    semantic_errorf(ctx, expr->line, "print argument must be a String");
+                }
+            }
+            if (!expr->resolved_type) expr->resolved_type = type_new(TK_VOID);
+            else expr->resolved_type->kind = TK_VOID;
+            break;
+        }
+
+        Symbol *sym = lookup(ctx, name);
         if (!sym) {
             semantic_errorf(ctx, expr->line, "undefined function '%s'", name);
         } else if (!sym->is_function) {
@@ -349,6 +404,44 @@ static void analyze_expr(SemanticContext *ctx, ASTNode *expr) {
                     }
                 }
             }
+        }
+        break;
+    }
+    case NODE_FIELD_ACCESS: {
+        analyze_expr(ctx, expr->data.field_access.object);
+        get_expr_type(ctx, expr->data.field_access.object);
+        ASTNode *obj = expr->data.field_access.object;
+        const char *field = expr->data.field_access.field;
+        TypeKind obj_kind = obj->resolved_type ? obj->resolved_type->kind : TK_UNKNOWN;
+
+        /* String .length */
+        if (obj_kind == TK_STRING && strcmp(field, "length") == 0) {
+            if (!expr->resolved_type) expr->resolved_type = type_new(TK_INT);
+            else expr->resolved_type->kind = TK_INT;
+            break;
+        }
+        if (obj_kind == TK_STRING) {
+            semantic_errorf(ctx, expr->line, "string has no field '%s'", field);
+            break;
+        }
+
+        /* No struct/class field access at commit 3 */
+        semantic_errorf(ctx, expr->line, "field access on non-struct type");
+        break;
+    }
+    case NODE_INDEX: {
+        analyze_expr(ctx, expr->data.index_access.object);
+        analyze_expr(ctx, expr->data.index_access.index);
+        TypeKind obj_type = get_expr_type(ctx, expr->data.index_access.object)->kind;
+        TypeKind idx_type = get_expr_type(ctx, expr->data.index_access.index)->kind;
+        if (obj_type == TK_STRING) {
+            if (!expr->resolved_type) expr->resolved_type = type_new(TK_CHAR);
+            else expr->resolved_type->kind = TK_CHAR;
+            if (idx_type != TK_INT && idx_type != TK_UNKNOWN) {
+                semantic_errorf(ctx, expr->line, "string index must be an integer");
+            }
+        } else if (obj_type != TK_UNKNOWN) {
+            semantic_errorf(ctx, expr->line, "index operator requires an array, hash, or string");
         }
         break;
     }
@@ -413,6 +506,7 @@ static void analyze_stmt(SemanticContext *ctx, ASTNode *node) {
             if (then_t != TK_UNKNOWN && then_t != TK_VOID && then_t == else_t) {
                 if (!node->resolved_type) node->resolved_type = type_new(then_t);
                 else node->resolved_type->kind = then_t;
+                if (is_ref_type(then_t)) node->is_fresh_alloc = 1;
             }
         }
         break;
@@ -429,6 +523,7 @@ static void analyze_stmt(SemanticContext *ctx, ASTNode *node) {
         if (ctx->loop_result_set && ctx->loop_result_type) {
             type_free(node->resolved_type);
             node->resolved_type = type_clone(ctx->loop_result_type);
+            if (is_ref_type(node->resolved_type->kind)) node->is_fresh_alloc = 1;
         }
         type_free(ctx->loop_result_type);
         ctx->loop_result_type = saved_lrt;
@@ -457,6 +552,7 @@ static void analyze_stmt(SemanticContext *ctx, ASTNode *node) {
         if (ctx->loop_result_set && ctx->loop_result_type) {
             type_free(node->resolved_type);
             node->resolved_type = type_clone(ctx->loop_result_type);
+            if (is_ref_type(node->resolved_type->kind)) node->is_fresh_alloc = 1;
         }
         type_free(ctx->loop_result_type);
         ctx->loop_result_type = saved_lrt;

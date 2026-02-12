@@ -43,9 +43,9 @@
 %token <dval> FLOAT_LIT
 %token <bval> BOOL_LIT
 %token <cval> CHAR_LIT
-%token <sval> IDENTIFIER
+%token <sval> STRING_LIT STRING_PART STRING_TAIL IDENTIFIER
 %token LET VAR
-%token TYPE_INT TYPE_FLOAT TYPE_BOOL TYPE_CHAR
+%token TYPE_INT TYPE_FLOAT TYPE_STRING TYPE_BOOL TYPE_CHAR
 %token IF UNLESS ELSE
 %token WHILE UNTIL FOR
 %token BREAK CONTINUE
@@ -53,13 +53,14 @@
 %token EQ NE LE GE AND OR
 %token PLUS_ASSIGN MINUS_ASSIGN STAR_ASSIGN SLASH_ASSIGN PERCENT_ASSIGN
 %token INCREMENT DECREMENT
-%token LPAREN RPAREN LBRACE RBRACE
-%token COMMA SEMICOLON COLON
+%token LPAREN RPAREN LBRACE RBRACE LBRACKET RBRACKET
+%token COMMA SEMICOLON COLON DOT
 %token PLUS MINUS STAR SLASH PERCENT LT GT ASSIGN NOT
 
-%type <node> program expr primary block
+%type <node> program expr primary block interp_string
 %type <node> if_expr unless_expr while_expr until_expr for_expr
 %type <node> func_def param for_init for_update
+%type <node> interp_parts
 %type <list> top_level_list expr_list param_list arg_list
 
 %type <type> type_spec
@@ -74,6 +75,7 @@
 %left STAR SLASH PERCENT
 %right NOT UMINUS UPLUS PREFIX_INCDEC
 %left INCREMENT DECREMENT
+%left DOT LBRACKET
 
 %%
 
@@ -104,6 +106,7 @@ param:
 type_spec:
     TYPE_INT                            { $$ = make_type_info(TK_INT); }
     | TYPE_FLOAT                        { $$ = make_type_info(TK_FLOAT); }
+    | TYPE_STRING                       { $$ = make_type_info(TK_STRING); }
     | TYPE_BOOL                         { $$ = make_type_info(TK_BOOL); }
     | TYPE_CHAR                         { $$ = make_type_info(TK_CHAR); }
     ;
@@ -152,6 +155,10 @@ expr:
     | MINUS expr %prec UMINUS           { $$ = make_unaryop(OP_NEG, $2); $$->line = @1.first_line; }
     | PLUS expr %prec UPLUS             { $$ = make_unaryop(OP_POS, $2); $$->line = @1.first_line; }
     | NOT expr                          { $$ = make_unaryop(OP_NOT, $2); $$->line = @1.first_line; }
+    /* Index access */
+    | expr LBRACKET expr RBRACKET       { $$ = make_index_access($1, $3); $$->line = @$.first_line; }
+    /* Field access */
+    | expr DOT IDENTIFIER               { $$ = make_field_access($1, $3); $$->line = @$.first_line; }
     /* Function call */
     | IDENTIFIER LPAREN arg_list RPAREN { $$ = make_call($1, $3); $$->line = @1.first_line; }
     /* Parenthesized expression */
@@ -224,9 +231,54 @@ arg_list:
 primary:
     INT_LIT                             { $$ = make_int($1); $$->line = @1.first_line; }
     | FLOAT_LIT                         { $$ = make_float($1); $$->line = @1.first_line; }
+    | STRING_LIT                        { $$ = make_string($1); $$->line = @1.first_line; }
     | BOOL_LIT                          { $$ = make_bool($1); $$->line = @1.first_line; }
     | CHAR_LIT                          { $$ = make_char($1); $$->line = @1.first_line; }
     | IDENTIFIER                        { $$ = make_ident($1); $$->line = @1.first_line; }
+    | interp_string                     { $$ = $1; }
+    ;
+
+/* String interpolation: "hello ${name}!" desugars to ("hello " + name) + "!" */
+interp_string:
+    interp_parts expr STRING_TAIL {
+        ASTNode *acc;
+        if ($1) {
+            acc = make_binop($1, OP_ADD, $2);
+        } else {
+            acc = $2;
+        }
+        if (strlen($3) > 0) {
+            $$ = make_binop(acc, OP_ADD, make_string($3));
+        } else {
+            free($3);
+            $$ = acc;
+        }
+    }
+    ;
+
+interp_parts:
+    STRING_PART {
+        if (strlen($1) > 0) {
+            $$ = make_string($1);
+        } else {
+            free($1);
+            $$ = NULL;
+        }
+    }
+    | interp_parts expr STRING_PART {
+        ASTNode *acc;
+        if ($1) {
+            acc = make_binop($1, OP_ADD, $2);
+        } else {
+            acc = $2;
+        }
+        if (strlen($3) > 0) {
+            $$ = make_binop(acc, OP_ADD, make_string($3));
+        } else {
+            free($3);
+            $$ = acc;
+        }
+    }
     ;
 
 %%

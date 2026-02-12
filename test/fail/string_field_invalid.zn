@@ -1,0 +1,8 @@
+# ERRORS: 1
+# Invalid field access on string
+
+func main() {
+    let s = "hello"
+    let x = s.count
+    0
+}

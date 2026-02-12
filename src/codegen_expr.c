@@ -4,6 +4,35 @@
 #include <stdarg.h>
 #include "codegen.h"
 
+/* Emit a retain call for a named string variable.
+   Skips if value is a fresh allocation. */
+static void emit_retain(CodegenContext *ctx, const char *name, ASTNode *value) {
+    if (value && value->is_fresh_alloc) return;
+    Type str_type = {TK_STRING};
+    cg_emit_indent(ctx);
+    emit_retain_call(ctx, name, &str_type);
+    cg_emit(ctx, ";\n");
+}
+
+/* Emit an inline retain for an expression temp (no newline/indent).
+   Used inside GCC statement expressions for if/break/continue results. */
+static void emit_inline_retain(CodegenContext *ctx, int temp_id, const char *prefix,
+                                ASTNode *value, Type *type) {
+    if (!type || !value || !is_ref_type(type->kind) || value->is_fresh_alloc) return;
+    char buf[64];
+    snprintf(buf, sizeof(buf), "%s%d", prefix, temp_id);
+    emit_retain_call(ctx, buf, type);
+    cg_emit(ctx, "; ");
+}
+
+/* Add a ref-type variable to the ARC scope for release tracking. */
+static void scope_track_ref(CodegenContext *ctx, const char *name, TypeKind kind) {
+    if (!ctx->scope) return;
+    if (kind == TK_STRING) {
+        cg_scope_add_ref(ctx, name, "zn_str");
+    }
+}
+
 /* Emit the for loop header: for (init; cond; update) */
 void gen_for_header(CodegenContext *ctx, ASTNode *node) {
     cg_emit(ctx, "for (");
@@ -29,14 +58,134 @@ void gen_for_header(CodegenContext *ctx, ASTNode *node) {
     cg_emit(ctx, ") ");
 }
 
-void gen_block(CodegenContext *ctx, ASTNode *block) {
+/* Generate string comparison using strcmp */
+void gen_string_comparison(CodegenContext *ctx, ASTNode *left, const char *op, ASTNode *right) {
+    cg_emit(ctx, "(strcmp((");
+    gen_expr(ctx, left);
+    cg_emit(ctx, ")->_data, (");
+    gen_expr(ctx, right);
+    cg_emitf(ctx, ")->_data) %s 0)", op);
+}
+
+/* Emit coercion wrapper for non-string operand in concat */
+void gen_coerce_to_string(CodegenContext *ctx, ASTNode *expr) {
+    TypeKind t = expr->resolved_type->kind;
+    if (t == TK_STRING) {
+        gen_expr(ctx, expr);
+        return;
+    }
+    switch (t) {
+    case TK_INT:   cg_emit(ctx, "__zn_str_from_int("); break;
+    case TK_FLOAT: cg_emit(ctx, "__zn_str_from_float("); break;
+    case TK_BOOL:  cg_emit(ctx, "__zn_str_from_bool("); break;
+    case TK_CHAR:  cg_emit(ctx, "__zn_str_from_char("); break;
+    default:       gen_expr(ctx, expr); return;
+    }
+    gen_expr(ctx, expr);
+    cg_emit(ctx, ")");
+}
+
+/* Count string concat operands */
+static int count_string_concat_parts(ASTNode *expr) {
+    if (!expr) return 0;
+    if (expr->type == NODE_BINOP && expr->resolved_type && expr->resolved_type->kind == TK_STRING
+        && expr->data.binop.op == OP_ADD) {
+        return count_string_concat_parts(expr->data.binop.left) +
+               count_string_concat_parts(expr->data.binop.right);
+    }
+    return 1;
+}
+
+/* Flatten a string concat tree into a linear sequence of leaves */
+static void flatten_string_concat(ASTNode *expr, ASTNode **leaves, int *count) {
+    if (expr->type == NODE_BINOP && expr->resolved_type && expr->resolved_type->kind == TK_STRING
+        && expr->data.binop.op == OP_ADD) {
+        flatten_string_concat(expr->data.binop.left, leaves, count);
+        flatten_string_concat(expr->data.binop.right, leaves, count);
+    } else {
+        leaves[(*count)++] = expr;
+    }
+}
+
+/* Generate string concatenation using GCC statement expressions.
+   Releases intermediate temporaries. */
+void gen_string_concat(CodegenContext *ctx, ASTNode *expr) {
+    int n = count_string_concat_parts(expr);
+    ASTNode **leaves = malloc(n * sizeof(ASTNode *));
+    int leaf_count = 0;
+    flatten_string_concat(expr, leaves, &leaf_count);
+
+    cg_emit(ctx, "({ ");
+
+    /* Pre-evaluate non-string leaves into coercion temps */
+    int *coerce_temp = malloc(leaf_count * sizeof(int));
+    for (int i = 0; i < leaf_count; i++) {
+        if (leaves[i]->resolved_type->kind != TK_STRING) {
+            int c = ctx->temp_counter++;
+            coerce_temp[i] = c;
+            cg_emitf(ctx, "ZnString *__c%d = ", c);
+            gen_coerce_to_string(ctx, leaves[i]);
+            cg_emit(ctx, "; ");
+        } else {
+            coerce_temp[i] = -1;
+        }
+    }
+
+    int base_temp = ctx->temp_counter;
+    ctx->temp_counter += leaf_count - 1;
+
+    for (int i = 0; i < leaf_count - 1; i++) {
+        int t = base_temp + i;
+        cg_emitf(ctx, "ZnString *__t%d = __zn_str_concat(", t);
+        if (i == 0) {
+            if (coerce_temp[0] >= 0)
+                cg_emitf(ctx, "__c%d", coerce_temp[0]);
+            else
+                gen_expr(ctx, leaves[0]);
+        } else {
+            cg_emitf(ctx, "__t%d", t - 1);
+        }
+        cg_emit(ctx, ", ");
+        if (coerce_temp[i + 1] >= 0)
+            cg_emitf(ctx, "__c%d", coerce_temp[i + 1]);
+        else
+            gen_expr(ctx, leaves[i + 1]);
+        cg_emit(ctx, "); ");
+
+        /* Release coerced non-string temps */
+        if (i == 0 && coerce_temp[0] >= 0) {
+            cg_emitf(ctx, "__zn_str_release(__c%d); ", coerce_temp[0]);
+        }
+        if (coerce_temp[i + 1] >= 0) {
+            cg_emitf(ctx, "__zn_str_release(__c%d); ", coerce_temp[i + 1]);
+        }
+
+        /* Release previous intermediate */
+        if (i > 0) {
+            cg_emitf(ctx, "__zn_str_release(__t%d); ", t - 1);
+        }
+    }
+
+    cg_emitf(ctx, "__t%d; })", base_temp + leaf_count - 2);
+    free(coerce_temp);
+    free(leaves);
+}
+
+void gen_block_with_scope(CodegenContext *ctx, ASTNode *block, int is_loop) {
     if (!block || block->type != NODE_BLOCK) return;
     cg_emit(ctx, "{\n");
     ctx->indent_level++;
+    cg_push_scope(ctx, is_loop);
     gen_stmts(ctx, block->data.block.stmts);
+    emit_scope_releases(ctx);
+    cg_pop_scope(ctx);
     ctx->indent_level--;
     cg_emit_indent(ctx);
     cg_emit(ctx, "}");
+}
+
+void gen_block(CodegenContext *ctx, ASTNode *block) {
+    gen_block_with_scope(ctx, block, 0);
 }
 
 void gen_expr(CodegenContext *ctx, ASTNode *expr) {
@@ -48,6 +197,9 @@ void gen_expr(CodegenContext *ctx, ASTNode *expr) {
         break;
     case NODE_FLOAT:
         cg_emitf(ctx, "%g", expr->data.dval);
+        break;
+    case NODE_STRING:
+        cg_emitf(ctx, "(ZnString*)&__zn_str_%d", expr->string_id);
         break;
     case NODE_BOOL:
         cg_emit(ctx, expr->data.bval ? "true" : "false");
@@ -69,11 +221,28 @@ void gen_expr(CodegenContext *ctx, ASTNode *expr) {
         cg_emit(ctx, expr->data.ident.name);
         break;
     case NODE_BINOP: {
-        cg_emit(ctx, "(");
-        gen_expr(ctx, expr->data.binop.left);
-        cg_emitf(ctx, " %s ", op_to_str(expr->data.binop.op));
-        gen_expr(ctx, expr->data.binop.right);
-        cg_emit(ctx, ")");
+        OpKind op = expr->data.binop.op;
+        int is_comparison = (op == OP_EQ || op == OP_NE ||
+                            op == OP_LT || op == OP_GT ||
+                            op == OP_LE || op == OP_GE);
+
+        /* String concatenation */
+        if (op == OP_ADD && expr->resolved_type && expr->resolved_type->kind == TK_STRING) {
+            gen_string_concat(ctx, expr);
+            break;
+        }
+
+        /* String comparison */
+        if (is_comparison && (expr_is_string(expr->data.binop.left) ||
+                             expr_is_string(expr->data.binop.right))) {
+            gen_string_comparison(ctx, expr->data.binop.left, op_to_str(op), expr->data.binop.right);
+        } else {
+            cg_emit(ctx, "(");
+            gen_expr(ctx, expr->data.binop.left);
+            cg_emitf(ctx, " %s ", op_to_str(op));
+            gen_expr(ctx, expr->data.binop.right);
+            cg_emit(ctx, ")");
+        }
         break;
     }
     case NODE_UNARYOP:
@@ -102,6 +271,14 @@ void gen_expr(CodegenContext *ctx, ASTNode *expr) {
         }
         break;
     case NODE_CALL: {
+        /* Built-in print function */
+        if (strcmp(expr->data.call.name, "print") == 0) {
+            cg_emit(ctx, "({ fputs((");
+            if (expr->data.call.args)
+                gen_expr(ctx, expr->data.call.args->node);
+            cg_emit(ctx, ")->_data, stdout); })");
+            break;
+        }
         /* Regular function call */
         cg_emit(ctx, expr->data.call.name);
         cg_emit(ctx, "(");
@@ -114,6 +291,28 @@ void gen_expr(CodegenContext *ctx, ASTNode *expr) {
         cg_emit(ctx, ")");
         break;
     }
+    case NODE_FIELD_ACCESS:
+        /* String .length */
+        if (expr->data.field_access.object->resolved_type &&
+            expr->data.field_access.object->resolved_type->kind == TK_STRING &&
+            strcmp(expr->data.field_access.field, "length") == 0) {
+            cg_emit(ctx, "(int64_t)((");
+            gen_expr(ctx, expr->data.field_access.object);
+            cg_emit(ctx, ")->_len)");
+            break;
+        }
+        /* Fallthrough for unsupported field access */
+        gen_expr(ctx, expr->data.field_access.object);
+        cg_emitf(ctx, ".%s", expr->data.field_access.field);
+        break;
+    case NODE_INDEX:
+        /* String indexing */
+        cg_emit(ctx, "(");
+        gen_expr(ctx, expr->data.index_access.object);
+        cg_emit(ctx, ")->_data[");
+        gen_expr(ctx, expr->data.index_access.index);
+        cg_emit(ctx, "]");
+        break;
     case NODE_IF: {
         TypeKind rt = expr->resolved_type ? expr->resolved_type->kind : TK_UNKNOWN;
         if (rt == TK_UNKNOWN || rt == TK_VOID) break;
@@ -137,6 +336,7 @@ void gen_expr(CodegenContext *ctx, ASTNode *expr) {
                 cg_emitf(ctx, "__if_%d = ", t);
                 gen_expr(ctx, last->node);
                 cg_emit(ctx, "; ");
+                emit_inline_retain(ctx, t, "__if_", last->node, expr->resolved_type);
             }
         }
         cg_emit(ctx, "} else { ");
@@ -145,6 +345,7 @@ void gen_expr(CodegenContext *ctx, ASTNode *expr) {
             cg_emitf(ctx, "__if_%d = ", t);
             gen_expr(ctx, else_b);
             cg_emit(ctx, "; ");
+            emit_inline_retain(ctx, t, "__if_", else_b, expr->resolved_type);
         } else if (else_b && else_b->type == NODE_BLOCK) {
             NodeList *stmts = else_b->data.block.stmts;
             NodeList *last = stmts;
@@ -156,6 +357,7 @@ void gen_expr(CodegenContext *ctx, ASTNode *expr) {
                 cg_emitf(ctx, "__if_%d = ", t);
                 gen_expr(ctx, last->node);
                 cg_emit(ctx, "; ");
+                emit_inline_retain(ctx, t, "__if_", last->node, expr->resolved_type);
             }
         }
         cg_emitf(ctx, "} __if_%d; })", t);
@@ -167,11 +369,17 @@ void gen_expr(CodegenContext *ctx, ASTNode *expr) {
         int t = ctx->temp_counter++;
         int saved_let = ctx->loop_expr_temp;
         ctx->loop_expr_temp = t;
-        cg_emitf(ctx, "({ %s __loop_%d; ", type_to_c(rt), t);
+        ctx->loop_expr_type = rt;
+
+        if (is_ref_type(rt)) {
+            cg_emitf(ctx, "({ %s __loop_%d = NULL; ", type_to_c(rt), t);
+        } else {
+            cg_emitf(ctx, "({ %s __loop_%d; ", type_to_c(rt), t);
+        }
         cg_emit(ctx, "while (");
         gen_expr(ctx, expr->data.while_expr.cond);
         cg_emit(ctx, ") ");
-        gen_block(ctx, expr->data.while_expr.body);
+        gen_block_with_scope(ctx, expr->data.while_expr.body, 1);
         cg_emitf(ctx, " __loop_%d; })", t);
         ctx->loop_expr_temp = saved_let;
         break;
@@ -182,9 +390,15 @@ void gen_expr(CodegenContext *ctx, ASTNode *expr) {
         int t = ctx->temp_counter++;
         int saved_let = ctx->loop_expr_temp;
         ctx->loop_expr_temp = t;
-        cg_emitf(ctx, "({ %s __loop_%d; ", type_to_c(rt), t);
+        ctx->loop_expr_type = rt;
+
+        if (is_ref_type(rt)) {
+            cg_emitf(ctx, "({ %s __loop_%d = NULL; ", type_to_c(rt), t);
+        } else {
+            cg_emitf(ctx, "({ %s __loop_%d; ", type_to_c(rt), t);
+        }
         gen_for_header(ctx, expr);
-        gen_block(ctx, expr->data.for_expr.body);
+        gen_block_with_scope(ctx, expr->data.for_expr.body, 1);
         cg_emitf(ctx, " __loop_%d; })", t);
         ctx->loop_expr_temp = saved_let;
         break;
@@ -207,9 +421,17 @@ void gen_stmt(CodegenContext *ctx, ASTNode *node) {
         const char *cq = is_const ? "const " : "";
         Type *vt = value->resolved_type;
         TypeKind t = vt ? vt->kind : TK_UNKNOWN;
-        cg_emitf(ctx, "%s%s %s = ", cq, type_to_c(t), name);
+        if (t == TK_STRING) {
+            cg_emitf(ctx, "%s %s = ", type_to_c(t), name);
+        } else {
+            cg_emitf(ctx, "%s%s %s = ", cq, type_to_c(t), name);
+        }
         gen_expr(ctx, value);
         cg_emit(ctx, ";\n");
+        if (t == TK_STRING) {
+            emit_retain(ctx, name, value);
+            scope_track_ref(ctx, name, t);
+        }
         break;
     }
     case NODE_IF:
@@ -233,46 +455,160 @@ void gen_stmt(CodegenContext *ctx, ASTNode *node) {
         cg_emit(ctx, "while (");
         gen_expr(ctx, node->data.while_expr.cond);
         cg_emit(ctx, ") ");
-        gen_block(ctx, node->data.while_expr.body);
+        gen_block_with_scope(ctx, node->data.while_expr.body, 1);
         cg_emit(ctx, "\n");
         break;
     case NODE_FOR:
         gen_for_header(ctx, node);
-        gen_block(ctx, node->data.for_expr.body);
+        gen_block_with_scope(ctx, node->data.for_expr.body, 1);
         cg_emit(ctx, "\n");
         break;
-    case NODE_BREAK:
+    case NODE_BREAK: {
+        CGScope *loop = find_loop_scope(ctx);
+        if (loop) {
+            for (CGScope *s = ctx->scope; s; s = s->parent) {
+                for (CGScopeVar *v = s->ref_vars; v; v = v->next) {
+                    cg_emit_indent(ctx);
+                    cg_emitf(ctx, "__%s_release(%s);\n", v->type_name, v->name);
+                }
+                if (s == loop) break;
+            }
+            cg_emit_indent(ctx);
+        }
         if (ctx->loop_expr_temp >= 0 && node->data.break_expr.value) {
-            cg_emitf(ctx, "__loop_%d = ", ctx->loop_expr_temp);
-            gen_expr(ctx, node->data.break_expr.value);
-            cg_emit(ctx, ";\n");
+            ASTNode *bv = node->data.break_expr.value;
+            if (bv->resolved_type && is_ref_type(bv->resolved_type->kind)) {
+                /* ARC: pre-eval value, retain-before-release, assign */
+                int t_val = ctx->temp_counter++;
+                char tname[32]; snprintf(tname, sizeof(tname), "__t%d", t_val);
+                cg_emitf(ctx, "%s %s = ", type_to_c(bv->resolved_type->kind), tname);
+                gen_expr(ctx, bv);
+                cg_emit(ctx, ";\n");
+                cg_emit_indent(ctx);
+                if (!bv->is_fresh_alloc) {
+                    emit_retain_call(ctx, tname, bv->resolved_type);
+                    cg_emit(ctx, ";\n");
+                    cg_emit_indent(ctx);
+                }
+                char lbuf[64];
+                snprintf(lbuf, sizeof(lbuf), "__loop_%d", ctx->loop_expr_temp);
+                emit_release_call(ctx, lbuf, bv->resolved_type);
+                cg_emit(ctx, ";\n");
+                cg_emit_indent(ctx);
+                cg_emitf(ctx, "__loop_%d = %s;\n", ctx->loop_expr_temp, tname);
+            } else {
+                cg_emitf(ctx, "__loop_%d = ", ctx->loop_expr_temp);
+                gen_expr(ctx, bv);
+                cg_emit(ctx, ";\n");
+            }
             cg_emit_indent(ctx);
         }
         cg_emit(ctx, "break;\n");
         break;
-    case NODE_CONTINUE:
+    }
+    case NODE_CONTINUE: {
+        CGScope *loop = find_loop_scope(ctx);
+        if (loop) {
+            for (CGScope *s = ctx->scope; s; s = s->parent) {
+                for (CGScopeVar *v = s->ref_vars; v; v = v->next) {
+                    cg_emit_indent(ctx);
+                    cg_emitf(ctx, "__%s_release(%s);\n", v->type_name, v->name);
+                }
+                if (s == loop) break;
+            }
+            cg_emit_indent(ctx);
+        }
         if (ctx->loop_expr_temp >= 0 && node->data.continue_expr.value) {
-            cg_emitf(ctx, "__loop_%d = ", ctx->loop_expr_temp);
-            gen_expr(ctx, node->data.continue_expr.value);
-            cg_emit(ctx, ";\n");
+            ASTNode *cv = node->data.continue_expr.value;
+            if (cv->resolved_type && is_ref_type(cv->resolved_type->kind)) {
+                /* ARC: pre-eval value, retain-before-release, assign */
+                int t_val = ctx->temp_counter++;
+                char tname[32]; snprintf(tname, sizeof(tname), "__t%d", t_val);
+                cg_emitf(ctx, "%s %s = ", type_to_c(cv->resolved_type->kind), tname);
+                gen_expr(ctx, cv);
+                cg_emit(ctx, ";\n");
+                cg_emit_indent(ctx);
+                if (!cv->is_fresh_alloc) {
+                    emit_retain_call(ctx, tname, cv->resolved_type);
+                    cg_emit(ctx, ";\n");
+                    cg_emit_indent(ctx);
+                }
+                char lbuf[64];
+                snprintf(lbuf, sizeof(lbuf), "__loop_%d", ctx->loop_expr_temp);
+                emit_release_call(ctx, lbuf, cv->resolved_type);
+                cg_emit(ctx, ";\n");
+                cg_emit_indent(ctx);
+                cg_emitf(ctx, "__loop_%d = %s;\n", ctx->loop_expr_temp, tname);
+            } else {
+                cg_emitf(ctx, "__loop_%d = ", ctx->loop_expr_temp);
+                gen_expr(ctx, cv);
+                cg_emit(ctx, ";\n");
+            }
             cg_emit_indent(ctx);
         }
         cg_emit(ctx, "continue;\n");
         break;
+    }
     case NODE_RETURN: {
         ASTNode *rv = node->data.ret.value;
         if (!rv) {
+            emit_all_scope_releases(ctx);
+            cg_emit_indent(ctx);
             cg_emit(ctx, "return;\n");
         } else {
-            cg_emit(ctx, "return ");
-            gen_expr(ctx, rv);
-            cg_emit(ctx, ";\n");
+            TypeKind rk = rv->resolved_type ? rv->resolved_type->kind : TK_UNKNOWN;
+            if (rk == TK_STRING) {
+                /* Save to temp, retain, release scopes, return */
+                int t = ctx->temp_counter++;
+                cg_emitf(ctx, "ZnString *__ret%d = ", t);
+                gen_expr(ctx, rv);
+                cg_emit(ctx, ";\n");
+                if (!rv->is_fresh_alloc) {
+                    cg_emit_indent(ctx);
+                    cg_emitf(ctx, "__zn_str_retain(__ret%d);\n", t);
+                }
+                emit_all_scope_releases(ctx);
+                cg_emit_indent(ctx);
+                cg_emitf(ctx, "return __ret%d;\n", t);
+            } else {
+                int t = ctx->temp_counter++;
+                cg_emitf(ctx, "%s __ret%d = ", type_to_c(rk), t);
+                gen_expr(ctx, rv);
+                cg_emit(ctx, ";\n");
+                emit_all_scope_releases(ctx);
+                cg_emit_indent(ctx);
+                cg_emitf(ctx, "return __ret%d;\n", t);
+            }
         }
         break;
     }
     case NODE_ASSIGN: {
-        gen_expr(ctx, node);
-        cg_emit(ctx, ";\n");
+        ASTNode *tgt = node->data.assign.target;
+        ASTNode *val = node->data.assign.value;
+        TypeKind val_kind = val->resolved_type ? val->resolved_type->kind : TK_UNKNOWN;
+
+        /* Simple variable assignment (NODE_IDENT target) */
+        if (tgt->type == NODE_IDENT) {
+            const char *name = tgt->data.ident.name;
+            if (val_kind == TK_STRING) {
+                int fresh = val->is_fresh_alloc;
+                cg_emitf(ctx, "__zn_str_release(%s);\n", name);
+                cg_emit_indent(ctx);
+                cg_emitf(ctx, "%s = ", name);
+                gen_expr(ctx, val);
+                cg_emit(ctx, ";\n");
+                if (!fresh) {
+                    cg_emit_indent(ctx);
+                    cg_emitf(ctx, "__zn_str_retain(%s);\n", name);
+                }
+            } else {
+                gen_expr(ctx, node);
+                cg_emit(ctx, ";\n");
+            }
+        } else {
+            gen_expr(ctx, node);
+            cg_emit(ctx, ";\n");
+        }
         break;
     }
     case NODE_FUNC_DEF:
@@ -331,9 +667,11 @@ void gen_func_body(CodegenContext *ctx, ASTNode *block, TypeKind ret_type) {
 
     cg_emit(ctx, "{\n");
     ctx->indent_level++;
+    cg_push_scope(ctx, 0);
 
     NodeList *stmts = block->data.block.stmts;
     if (!stmts) {
+        cg_pop_scope(ctx);
         ctx->indent_level--;
         cg_emit_indent(ctx);
         cg_emit(ctx, "}");
@@ -354,14 +692,35 @@ void gen_func_body(CodegenContext *ctx, ASTNode *block, TypeKind ret_type) {
             gen_stmt(ctx, last_node);
         } else if (ret_type == TK_VOID || last_kind == TK_VOID) {
             gen_stmt(ctx, last_node);
-        } else {
+            emit_scope_releases(ctx);
+        } else if (ret_type == TK_STRING) {
+            int t = ctx->temp_counter++;
             cg_emit_indent(ctx);
-            cg_emitf(ctx, "return ");
+            cg_emitf(ctx, "ZnString *__ret%d = ", t);
             gen_expr(ctx, last_node);
             cg_emit(ctx, ";\n");
+            if (!last_node->is_fresh_alloc) {
+                cg_emit_indent(ctx);
+                cg_emitf(ctx, "__zn_str_retain(__ret%d);\n", t);
+            }
+            emit_scope_releases(ctx);
+            cg_emit_indent(ctx);
+            cg_emitf(ctx, "return __ret%d;\n", t);
+        } else {
+            int t = ctx->temp_counter++;
+            cg_emit_indent(ctx);
+            cg_emitf(ctx, "%s __ret%d = ", type_to_c(ret_type), t);
+            gen_expr(ctx, last_node);
+            cg_emit(ctx, ";\n");
+            emit_scope_releases(ctx);
+            cg_emit_indent(ctx);
+            cg_emitf(ctx, "return __ret%d;\n", t);
         }
+    } else {
+        emit_scope_releases(ctx);
     }
 
+    cg_pop_scope(ctx);
     ctx->indent_level--;
     cg_emit_indent(ctx);
     cg_emit(ctx, "}");

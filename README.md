@@ -33,14 +33,15 @@ var x = 42  # Inline comment
 
 ### Types
 
-Zinc has four primitive types:
+Zinc has four primitive types and a reference-counted string type:
 
-| Type    | Description             | C equivalent |
-|---------|-------------------------|--------------|
-| `int`   | 64-bit signed integer   | `int64_t`    |
-| `float` | 64-bit floating point   | `double`     |
-| `bool`  | Boolean                 | `bool`       |
-| `char`  | ASCII character         | `char`       |
+| Type     | Description                | C equivalent |
+|----------|----------------------------|--------------|
+| `int`    | 64-bit signed integer      | `int64_t`    |
+| `float`  | 64-bit floating point      | `double`     |
+| `bool`   | Boolean                    | `bool`       |
+| `char`   | ASCII character            | `char`       |
+| `String` | Reference-counted string   | `ZnString*`  |
 
 Types are inferred from context — you never write type annotations on variables.
 
@@ -64,6 +65,59 @@ false
 'A'
 '\n'          # Escape sequences: \n \t \r \0 \\ \'
 ```
+
+### Strings
+
+The `String` type is a reference-counted, immutable-content string. String literals use double quotes and are automatically managed.
+
+```
+let greeting = "hello, world"
+let empty = ""
+```
+
+**String operations:**
+
+```
+# Concatenation with +
+let full = "hello" + " " + "world"
+
+# Length property
+let len = full.length    # 11
+
+# Character indexing (returns char)
+let ch = full[0]         # 'h'
+
+# Comparison
+if greeting == "hello, world" {
+    # strings are compared by value
+}
+```
+
+**String interpolation** embeds expressions inside strings with `${}`:
+
+```
+let name = "world"
+let msg = "hello ${name}!"          # "hello world!"
+
+let x = 42
+let info = "x is ${x}"             # "x is 42"
+
+let a = 10
+let b = 20
+let sum = "${a} + ${b} = ${a + b}" # "10 + 20 = 30"
+```
+
+**Automatic coercion:** When `+` has a `String` on either side, the other operand is automatically converted:
+
+```
+let n = 42
+let s = "value: " + n      # "value: 42"
+let f = "pi: " + 3.14      # "pi: 3.14"
+let b = "flag: " + true    # "flag: true"
+let c = "char: " + 'A'     # "char: A"
+```
+
+**Escape sequences:** `\n` (newline), `\t` (tab), `\r` (carriage return), `\\` (backslash), `\"` (quote), `\$` (dollar sign), `\0` (null).
 
 ### Variables and Constants
 
@@ -214,6 +268,19 @@ var x = until false {
     break 42
 }
 ```
+
+### Built-in Functions
+
+#### print
+
+`print` outputs a string to standard output.
+
+```
+print("hello world\n")
+print("the answer is ${40 + 2}\n")
+```
+
+Takes exactly one `String` argument. Use string interpolation and escape sequences for formatting.
 
 ### Program Structure
 

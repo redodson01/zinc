@@ -1,0 +1,12 @@
+# Test: Built-in print function
+
+func main() {
+    print("hello world\n")
+
+    var x = 42
+    print("x = ${x}\n")
+
+    print("no newline here")
+
+    0
+}

@@ -1,0 +1,10 @@
+func main() {
+    let x = "hello"
+    let y = "world"
+    var i = 0
+    while i < 100000 {
+        var s = if i % 2 == 0 { x } else { y }
+        i = i + 1
+    }
+    0
+}

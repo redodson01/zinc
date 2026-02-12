@@ -1,0 +1,8 @@
+# ERRORS: 1
+# Index operator on non-string type
+
+func main() {
+    let x = 42
+    let y = x[0]
+    0
+}

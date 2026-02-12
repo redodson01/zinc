@@ -1,0 +1,12 @@
+func main() {
+    let x = "hello" + ""
+    var i = 0
+    var s = while i < 100000 {
+        i = i + 1
+        if i < 100000 {
+            continue x
+        }
+        break x
+    }
+    0
+}

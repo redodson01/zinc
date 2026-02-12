@@ -20,6 +20,7 @@ typedef enum {
     TK_UNKNOWN,
     TK_INT,
     TK_FLOAT,
+    TK_STRING,
     TK_BOOL,
     TK_CHAR,
     TK_VOID,
@@ -46,6 +47,7 @@ typedef enum {
     NODE_BLOCK,
     NODE_INT,
     NODE_FLOAT,
+    NODE_STRING,
     NODE_BOOL,
     NODE_CHAR,
     NODE_IDENT,
@@ -64,6 +66,8 @@ typedef enum {
     NODE_FUNC_DEF,
     NODE_CALL,
     NODE_RETURN,
+    NODE_FIELD_ACCESS,
+    NODE_INDEX,
 } NodeType;
 
 typedef struct ASTNode ASTNode;
@@ -78,12 +82,15 @@ struct NodeList {
 struct ASTNode {
     NodeType type;
     int line;                /* Source line number for error reporting */
+    int string_id;           /* Codegen-side string literal ID, -1 if not a string */
+    int is_fresh_alloc;      /* 1 if this expression produces a fresh ref-counted allocation */
     Type *resolved_type;     /* Filled in by semantic analysis */
     union {
         int64_t ival;
         double dval;
         int bval;
         char cval;
+        char *sval;
 
         struct { NodeList *stmts; } program;
         struct { NodeList *stmts; } block;
@@ -103,6 +110,8 @@ struct ASTNode {
         struct { ASTNode *value; } ret;
         struct { ASTNode *value; } break_expr;
         struct { ASTNode *value; } continue_expr;
+        struct { ASTNode *object; char *field; } field_access;
+        struct { ASTNode *object; ASTNode *index; } index_access;
     } data;
 };
 
@@ -114,6 +123,7 @@ ASTNode *make_program(NodeList *stmts);
 ASTNode *make_block(NodeList *stmts);
 ASTNode *make_int(int64_t val);
 ASTNode *make_float(double val);
+ASTNode *make_string(char *val);
 ASTNode *make_bool(int val);
 ASTNode *make_char(char val);
 ASTNode *make_ident(char *name);
@@ -132,6 +142,8 @@ ASTNode *make_continue_expr(ASTNode *value);
 ASTNode *make_func_def(char *name, NodeList *params, ASTNode *body);
 ASTNode *make_call(char *name, NodeList *args);
 ASTNode *make_return(ASTNode *value);
+ASTNode *make_field_access(ASTNode *object, char *field);
+ASTNode *make_index_access(ASTNode *object, ASTNode *index);
 
 /* List utilities — O(1) append via tail pointer */
 NodeList *make_list(ASTNode *node);

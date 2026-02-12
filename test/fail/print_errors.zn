@@ -1,0 +1,8 @@
+# ERRORS: 3
+# Print function type and arity errors
+func main() {
+    print(42)
+    print("a", "b")
+    print()
+    0
+}

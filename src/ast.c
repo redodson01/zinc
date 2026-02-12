@@ -63,6 +63,8 @@ int type_eq(const Type *a, const Type *b) {
 static ASTNode *alloc_node(NodeType type) {
     ASTNode *n = calloc(1, sizeof(ASTNode));
     n->type = type;
+    n->string_id = -1;
+    n->is_fresh_alloc = 0;
     return n;
 }
 
@@ -93,6 +95,12 @@ ASTNode *make_int(int64_t val) {
 ASTNode *make_float(double val) {
     ASTNode *n = alloc_node(NODE_FLOAT);
     n->data.dval = val;
+    return n;
+}
+
+ASTNode *make_string(char *val) {
+    ASTNode *n = alloc_node(NODE_STRING);
+    n->data.sval = val;
     return n;
 }
 
@@ -225,6 +233,20 @@ ASTNode *make_return(ASTNode *value) {
     return n;
 }
 
+ASTNode *make_field_access(ASTNode *object, char *field) {
+    ASTNode *n = alloc_node(NODE_FIELD_ACCESS);
+    n->data.field_access.object = object;
+    n->data.field_access.field = field;
+    return n;
+}
+
+ASTNode *make_index_access(ASTNode *object, ASTNode *index) {
+    ASTNode *n = alloc_node(NODE_INDEX);
+    n->data.index_access.object = object;
+    n->data.index_access.index = index;
+    return n;
+}
+
 /* O(1) list append using tail pointer */
 NodeList *make_list(ASTNode *node) {
     NodeList *l = malloc(sizeof(NodeList));
@@ -253,6 +275,7 @@ static void print_type_info(TypeInfo *ti) {
     switch (ti->kind) {
     case TK_INT:    printf("int"); break;
     case TK_FLOAT:  printf("float"); break;
+    case TK_STRING: printf("String"); break;
     case TK_BOOL:   printf("bool"); break;
     case TK_CHAR:   printf("char"); break;
     case TK_VOID:   printf("void"); break;
@@ -280,6 +303,9 @@ void print_ast(ASTNode *node, int indent) {
         break;
     case NODE_FLOAT:
         printf("Float: %g\n", node->data.dval);
+        break;
+    case NODE_STRING:
+        printf("String: \"%s\"\n", node->data.sval);
         break;
     case NODE_BOOL:
         printf("Bool: %s\n", node->data.bval ? "true" : "false");
@@ -389,6 +415,15 @@ void print_ast(ASTNode *node, int indent) {
         if (node->data.ret.value)
             print_ast(node->data.ret.value, indent + 1);
         break;
+    case NODE_FIELD_ACCESS:
+        printf("FieldAccess: .%s\n", node->data.field_access.field);
+        print_ast(node->data.field_access.object, indent + 1);
+        break;
+    case NODE_INDEX:
+        printf("Index\n");
+        print_ast(node->data.index_access.object, indent + 1);
+        print_ast(node->data.index_access.index, indent + 1);
+        break;
     }
 }
 
@@ -412,6 +447,7 @@ void free_ast(ASTNode *node) {
     case NODE_PROGRAM: free_list(node->data.program.stmts); break;
     case NODE_BLOCK: free_list(node->data.block.stmts); break;
     case NODE_INT: case NODE_FLOAT: case NODE_BOOL: case NODE_CHAR: break;
+    case NODE_STRING: free(node->data.sval); break;
     case NODE_IDENT: free(node->data.ident.name); break;
     case NODE_PARAM:
         free(node->data.param.name);
@@ -467,6 +503,14 @@ void free_ast(ASTNode *node) {
         free_list(node->data.call.args);
         break;
     case NODE_RETURN: free_ast(node->data.ret.value); break;
+    case NODE_FIELD_ACCESS:
+        free_ast(node->data.field_access.object);
+        free(node->data.field_access.field);
+        break;
+    case NODE_INDEX:
+        free_ast(node->data.index_access.object);
+        free_ast(node->data.index_access.index);
+        break;
     }
     type_free(node->resolved_type);
     free(node);

@@ -1,0 +1,12 @@
+func make_str() {
+    "hello" + " world"
+}
+
+func main() {
+    var i = 0
+    while i < 100000 {
+        var s = make_str()
+        i = i + 1
+    }
+    0
+}

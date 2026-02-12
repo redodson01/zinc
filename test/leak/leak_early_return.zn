@@ -1,0 +1,17 @@
+func process(n: int) {
+    var s = "computed" + " result"
+    var t = "another" + " string"
+    if n % 2 == 0 {
+        return 0
+    }
+    0
+}
+
+func main() {
+    var i = 0
+    while i < 100000 {
+        process(i)
+        i = i + 1
+    }
+    0
+}

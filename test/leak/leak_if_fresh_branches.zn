@@ -1,0 +1,8 @@
+func main() {
+    var i = 0
+    while i < 100000 {
+        var s = if i % 2 == 0 { "a" + "b" } else { "c" + "d" }
+        i = i + 1
+    }
+    0
+}
