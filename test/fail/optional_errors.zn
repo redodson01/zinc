@@ -1,0 +1,17 @@
+# ERRORS: 2
+
+func main() {
+    # Using ? on a non-optional int should error
+    let x = 10
+    if x? {
+        0
+    }
+
+    # Using ? on a non-optional bool should error
+    let b = true
+    if b? {
+        0
+    }
+
+    0
+}

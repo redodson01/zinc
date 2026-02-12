@@ -54,7 +54,7 @@
 %token PLUS_ASSIGN MINUS_ASSIGN STAR_ASSIGN SLASH_ASSIGN PERCENT_ASSIGN
 %token INCREMENT DECREMENT
 %token LPAREN RPAREN LBRACE RBRACE LBRACKET RBRACKET
-%token COMMA SEMICOLON COLON DOT
+%token COMMA SEMICOLON COLON DOT QUESTION
 %token PLUS MINUS STAR SLASH PERCENT LT GT ASSIGN NOT
 
 %type <node> program expr primary block interp_string
@@ -75,7 +75,7 @@
 %left STAR SLASH PERCENT
 %right NOT UMINUS UPLUS PREFIX_INCDEC
 %left INCREMENT DECREMENT
-%left DOT LBRACKET
+%left DOT LBRACKET QUESTION
 
 %%
 
@@ -109,6 +109,7 @@ type_spec:
     | TYPE_STRING                       { $$ = make_type_info(TK_STRING); }
     | TYPE_BOOL                         { $$ = make_type_info(TK_BOOL); }
     | TYPE_CHAR                         { $$ = make_type_info(TK_CHAR); }
+    | type_spec QUESTION                { $$ = make_optional_type($1); }
     ;
 
 block:
@@ -159,6 +160,8 @@ expr:
     | expr LBRACKET expr RBRACKET       { $$ = make_index_access($1, $3); $$->line = @$.first_line; }
     /* Field access */
     | expr DOT IDENTIFIER               { $$ = make_field_access($1, $3); $$->line = @$.first_line; }
+    /* Optional check */
+    | expr QUESTION                     { $$ = make_optional_check($1); $$->line = @$.first_line; }
     /* Function call */
     | IDENTIFIER LPAREN arg_list RPAREN { $$ = make_call($1, $3); $$->line = @1.first_line; }
     /* Parenthesized expression */

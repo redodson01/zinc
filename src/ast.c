@@ -45,6 +45,7 @@ Type *type_clone(const Type *t) {
     if (!t) return NULL;
     Type *c = calloc(1, sizeof(Type));
     c->kind = t->kind;
+    c->is_optional = t->is_optional;
     return c;
 }
 
@@ -57,6 +58,7 @@ int type_eq(const Type *a, const Type *b) {
     if (a == b) return 1;
     if (!a || !b) return 0;
     if (a->kind != b->kind) return 0;
+    if (a->is_optional != b->is_optional) return 0;
     return 1;
 }
 
@@ -72,6 +74,11 @@ TypeInfo *make_type_info(TypeKind kind) {
     TypeInfo *t = calloc(1, sizeof(TypeInfo));
     t->kind = kind;
     return t;
+}
+
+TypeInfo *make_optional_type(TypeInfo *base) {
+    if (base) base->is_optional = 1;
+    return base;
 }
 
 ASTNode *make_program(NodeList *stmts) {
@@ -247,6 +254,12 @@ ASTNode *make_index_access(ASTNode *object, ASTNode *index) {
     return n;
 }
 
+ASTNode *make_optional_check(ASTNode *operand) {
+    ASTNode *n = alloc_node(NODE_OPTIONAL_CHECK);
+    n->data.optional_check.operand = operand;
+    return n;
+}
+
 /* O(1) list append using tail pointer */
 NodeList *make_list(ASTNode *node) {
     NodeList *l = malloc(sizeof(NodeList));
@@ -281,6 +294,7 @@ static void print_type_info(TypeInfo *ti) {
     case TK_VOID:   printf("void"); break;
     default:        printf("unknown"); break;
     }
+    if (ti->is_optional) printf("?");
 }
 
 void print_ast(ASTNode *node, int indent) {
@@ -424,6 +438,10 @@ void print_ast(ASTNode *node, int indent) {
         print_ast(node->data.index_access.object, indent + 1);
         print_ast(node->data.index_access.index, indent + 1);
         break;
+    case NODE_OPTIONAL_CHECK:
+        printf("OptionalCheck\n");
+        print_ast(node->data.optional_check.operand, indent + 1);
+        break;
     }
 }
 
@@ -510,6 +528,9 @@ void free_ast(ASTNode *node) {
     case NODE_INDEX:
         free_ast(node->data.index_access.object);
         free_ast(node->data.index_access.index);
+        break;
+    case NODE_OPTIONAL_CHECK:
+        free_ast(node->data.optional_check.operand);
         break;
     }
     type_free(node->resolved_type);

@@ -6,7 +6,7 @@
 /* Symbol table entry */
 typedef struct Symbol {
     char *name;
-    Type *type;          /* resolved type */
+    Type *type;          /* resolved type (includes kind, is_optional) */
     int is_const;        /* 1 for let, 0 for var */
     int is_function;
     int param_count;

@@ -269,6 +269,70 @@ var x = until false {
 }
 ```
 
+### Optional Types
+
+Optional types represent a value that may or may not have an outcome. There is no `null`, `nil`, or `None` in Zinc — optionals arise naturally from control flow that may not produce a result:
+
+```
+# An if-without-else produces an optional — the outcome depends on the condition
+let maybe_val = if x > 5 { 42 }     # type: int?
+
+# Conditional loops produce optionals — the break may never execute
+var i = 0
+let result = while i < 10 {
+    i += 1
+    if i == 5 { break i * 10 }
+}                                     # type: int?
+
+# For loops are always conditional
+let found = for var j = 0; j < 100; j += 1 {
+    if j == 42 { break j }
+}                                     # type: int?
+```
+
+Use the `?` operator to check whether an optional has a value. Inside the `if` body, the variable is **type-narrowed** to its non-optional type:
+
+```
+let maybe_val = if x > 5 { 42 }
+
+if maybe_val? {
+    # maybe_val is narrowed to int here
+    let doubled = maybe_val * 2
+}
+```
+
+Reference types (strings) use `null` under the hood, but this is an implementation detail — the `?` operator works uniformly on all optional types:
+
+```
+let maybe_str = if x > 0 { "hello" }   # type: String?
+
+if maybe_str? {
+    let len = maybe_str.length
+}
+```
+
+**Optional type annotations** can be used in function parameters (`int?`, `String?`, etc.):
+
+```
+func maybe_double(val: int?) {
+    if val? {
+        val * 2
+    }
+}
+```
+
+An infinite loop (`while true` or `until false`) always executes its break, so it produces a non-optional value:
+
+```
+let val = while true {
+    break 42
+}                        # type: int (not optional)
+
+let val2 = until false {
+    break 99
+}                        # type: int (not optional)
+```
+
 ### Built-in Functions
 
 #### print

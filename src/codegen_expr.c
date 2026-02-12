@@ -8,7 +8,7 @@
    Skips if value is a fresh allocation. */
 static void emit_retain(CodegenContext *ctx, const char *name, ASTNode *value) {
     if (value && value->is_fresh_alloc) return;
-    Type str_type = {TK_STRING};
+    Type str_type = {TK_STRING, 0};
     cg_emit_indent(ctx);
     emit_retain_call(ctx, name, &str_type);
     cg_emit(ctx, ";\n");
@@ -26,9 +26,9 @@ static void emit_inline_retain(CodegenContext *ctx, int temp_id, const char *pre
 }
 
 /* Add a ref-type variable to the ARC scope for release tracking. */
-static void scope_track_ref(CodegenContext *ctx, const char *name, TypeKind kind) {
-    if (!ctx->scope) return;
-    if (kind == TK_STRING) {
+static void scope_track_ref(CodegenContext *ctx, const char *name, Type *type) {
+    if (!ctx->scope || !type) return;
+    if (type->kind == TK_STRING) {
         cg_scope_add_ref(ctx, name, "zn_str");
     }
 }
@@ -217,9 +217,20 @@ void gen_expr(CodegenContext *ctx, ASTNode *expr) {
         }
         cg_emit(ctx, "'");
         break;
-    case NODE_IDENT:
-        cg_emit(ctx, expr->data.ident.name);
+    case NODE_IDENT: {
+        const char *id_name = expr->data.ident.name;
+        /* Check if this variable is narrowed (optional value type) */
+        int is_narrowed = 0;
+        for (CGNarrow *n = ctx->narrowed; n; n = n->next) {
+            if (strcmp(n->name, id_name) == 0) { is_narrowed = 1; break; }
+        }
+        if (is_narrowed) {
+            cg_emitf(ctx, "%s._val", id_name);
+        } else {
+            cg_emit(ctx, id_name);
+        }
         break;
+    }
     case NODE_BINOP: {
         OpKind op = expr->data.binop.op;
         int is_comparison = (op == OP_EQ || op == OP_NE ||
@@ -282,11 +293,32 @@ void gen_expr(CodegenContext *ctx, ASTNode *expr) {
         /* Regular function call */
         cg_emit(ctx, expr->data.call.name);
         cg_emit(ctx, "(");
+        Symbol *func_sym = lookup(ctx->sem_ctx, expr->data.call.name);
         int first = 1;
+        int arg_idx = 0;
         for (NodeList *arg = expr->data.call.args; arg; arg = arg->next) {
             if (!first) cg_emit(ctx, ", ");
-            gen_expr(ctx, arg->node);
+            /* Wrap non-optional value in optional struct if param expects it */
+            int wrap_opt = 0;
+            const char *opt_wrap = NULL;
+            if (func_sym && arg_idx < func_sym->param_count &&
+                func_sym->param_types[arg_idx] &&
+                func_sym->param_types[arg_idx]->is_optional) {
+                Type *at = arg->node->resolved_type;
+                if (!at || !at->is_optional) {
+                    opt_wrap = opt_type_for(func_sym->param_types[arg_idx]->kind);
+                    if (opt_wrap) wrap_opt = 1;
+                }
+            }
+            if (wrap_opt) {
+                cg_emitf(ctx, "(%s){._has = true, ._val = ", opt_wrap);
+                gen_expr(ctx, arg->node);
+                cg_emit(ctx, "}");
+            } else {
+                gen_expr(ctx, arg->node);
+            }
             first = 0;
+            arg_idx++;
         }
         cg_emit(ctx, ")");
         break;
@@ -301,7 +333,6 @@ void gen_expr(CodegenContext *ctx, ASTNode *expr) {
             cg_emit(ctx, ")->_len)");
             break;
         }
-        /* Fallthrough for unsupported field access */
         gen_expr(ctx, expr->data.field_access.object);
         cg_emitf(ctx, ".%s", expr->data.field_access.field);
         break;
@@ -313,11 +344,96 @@ void gen_expr(CodegenContext *ctx, ASTNode *expr) {
         gen_expr(ctx, expr->data.index_access.index);
         cg_emit(ctx, "]");
         break;
+    case NODE_OPTIONAL_CHECK: {
+        ASTNode *operand = expr->data.optional_check.operand;
+        TypeKind ot = operand->resolved_type ? operand->resolved_type->kind : TK_UNKNOWN;
+        int is_ref = is_ref_type(ot);
+        if (is_ref) {
+            /* Reference types: check != NULL */
+            cg_emit(ctx, "(");
+            gen_expr(ctx, operand);
+            cg_emit(ctx, " != NULL)");
+        } else {
+            /* Value types: check ._has on the optional variable */
+            if (operand->type == NODE_IDENT) {
+                cg_emitf(ctx, "(%s._has)", operand->data.ident.name);
+            } else {
+                cg_emit(ctx, "(");
+                gen_expr(ctx, operand);
+                cg_emit(ctx, "._has)");
+            }
+        }
+        break;
+    }
     case NODE_IF: {
         TypeKind rt = expr->resolved_type ? expr->resolved_type->kind : TK_UNKNOWN;
         if (rt == TK_UNKNOWN || rt == TK_VOID) break;
 
         int t = ctx->temp_counter++;
+
+        /* Optional if-without-else */
+        int is_opt = expr->resolved_type ? expr->resolved_type->is_optional : 0;
+        if (is_opt && !expr->data.if_expr.else_b) {
+            const char *opt = opt_type_for(rt);
+            if (opt) {
+                /* Value type optional */
+                cg_emitf(ctx, "({ %s __if_%d; ", opt, t);
+                cg_emit(ctx, "if (");
+                gen_expr(ctx, expr->data.if_expr.cond);
+                cg_emit(ctx, ") { ");
+                if (expr->data.if_expr.then_b &&
+                    expr->data.if_expr.then_b->type == NODE_BLOCK) {
+                    NodeList *stmts = expr->data.if_expr.then_b->data.block.stmts;
+                    NodeList *last = stmts;
+                    while (last && last->next) last = last->next;
+                    for (NodeList *s = stmts; s != last; s = s->next) {
+                        gen_stmt(ctx, s->node);
+                    }
+                    if (last && last->node) {
+                        cg_emitf(ctx, "__if_%d._has = true; __if_%d._val = ", t, t);
+                        gen_expr(ctx, last->node);
+                        cg_emit(ctx, "; ");
+                    }
+                }
+                cg_emitf(ctx, "} else { __if_%d._has = false; } __if_%d; })", t, t);
+            } else {
+                /* Reference type optional (NULL = none) */
+                cg_emitf(ctx, "({ %s __if_%d = NULL; ", type_to_c(rt), t);
+                cg_emit(ctx, "if (");
+                gen_expr(ctx, expr->data.if_expr.cond);
+                cg_emit(ctx, ") { ");
+                if (expr->data.if_expr.then_b &&
+                    expr->data.if_expr.then_b->type == NODE_BLOCK) {
+                    NodeList *stmts = expr->data.if_expr.then_b->data.block.stmts;
+                    NodeList *last = stmts;
+                    while (last && last->next) last = last->next;
+                    for (NodeList *s = stmts; s != last; s = s->next) {
+                        gen_stmt(ctx, s->node);
+                    }
+                    if (last && last->node) {
+                        cg_emitf(ctx, "__if_%d = ", t);
+                        gen_expr(ctx, last->node);
+                        cg_emit(ctx, "; ");
+                    }
+                }
+                cg_emitf(ctx, "} __if_%d; })", t);
+            }
+            break;
+        }
+
+        /* Check for type narrowing in if-expression */
+        ASTNode *expr_cond = expr->data.if_expr.cond;
+        int expr_narrowing = 0;
+        const char *expr_narrow_name = NULL;
+        if (expr_cond && expr_cond->type == NODE_OPTIONAL_CHECK &&
+            expr_cond->data.optional_check.operand->type == NODE_IDENT) {
+            ASTNode *operand = expr_cond->data.optional_check.operand;
+            if (operand->resolved_type && operand->resolved_type->is_optional &&
+                !is_ref_type(operand->resolved_type->kind)) {
+                expr_narrowing = 1;
+                expr_narrow_name = operand->data.ident.name;
+            }
+        }
 
         /* Non-optional if/else expression */
         cg_emitf(ctx, "({ %s __if_%d; ", type_to_c(rt), t);
@@ -326,6 +442,13 @@ void gen_expr(CodegenContext *ctx, ASTNode *expr) {
         cg_emit(ctx, ") { ");
         if (expr->data.if_expr.then_b &&
             expr->data.if_expr.then_b->type == NODE_BLOCK) {
+            CGNarrow *ne = NULL;
+            if (expr_narrowing) {
+                ne = malloc(sizeof(CGNarrow));
+                ne->name = strdup(expr_narrow_name);
+                ne->next = ctx->narrowed;
+                ctx->narrowed = ne;
+            }
             NodeList *stmts = expr->data.if_expr.then_b->data.block.stmts;
             NodeList *last = stmts;
             while (last && last->next) last = last->next;
@@ -337,6 +460,11 @@ void gen_expr(CodegenContext *ctx, ASTNode *expr) {
                 gen_expr(ctx, last->node);
                 cg_emit(ctx, "; ");
                 emit_inline_retain(ctx, t, "__if_", last->node, expr->resolved_type);
+            }
+            if (ne) {
+                ctx->narrowed = ne->next;
+                free(ne->name);
+                free(ne);
             }
         }
         cg_emit(ctx, "} else { ");
@@ -368,20 +496,34 @@ void gen_expr(CodegenContext *ctx, ASTNode *expr) {
         if (rt == TK_UNKNOWN || rt == TK_VOID) break;
         int t = ctx->temp_counter++;
         int saved_let = ctx->loop_expr_temp;
+        int saved_opt = ctx->loop_expr_optional;
         ctx->loop_expr_temp = t;
         ctx->loop_expr_type = rt;
+        int is_opt = expr->resolved_type ? expr->resolved_type->is_optional : 0;
+        ctx->loop_expr_optional = is_opt ? 1 : 0;
 
-        if (is_ref_type(rt)) {
-            cg_emitf(ctx, "({ %s __loop_%d = NULL; ", type_to_c(rt), t);
+        if (is_opt) {
+            const char *opt = opt_type_for(rt);
+            if (opt) {
+                cg_emitf(ctx, "({ %s __loop_%d; __loop_%d._has = false; ", opt, t, t);
+            } else {
+                cg_emitf(ctx, "({ %s __loop_%d = NULL; ", type_to_c(rt), t);
+            }
         } else {
-            cg_emitf(ctx, "({ %s __loop_%d; ", type_to_c(rt), t);
+            if (is_ref_type(rt)) {
+                cg_emitf(ctx, "({ %s __loop_%d = NULL; ", type_to_c(rt), t);
+            } else {
+                cg_emitf(ctx, "({ %s __loop_%d; ", type_to_c(rt), t);
+            }
         }
+
         cg_emit(ctx, "while (");
         gen_expr(ctx, expr->data.while_expr.cond);
         cg_emit(ctx, ") ");
         gen_block_with_scope(ctx, expr->data.while_expr.body, 1);
         cg_emitf(ctx, " __loop_%d; })", t);
         ctx->loop_expr_temp = saved_let;
+        ctx->loop_expr_optional = saved_opt;
         break;
     }
     case NODE_FOR: {
@@ -389,18 +531,23 @@ void gen_expr(CodegenContext *ctx, ASTNode *expr) {
         if (rt == TK_UNKNOWN || rt == TK_VOID) break;
         int t = ctx->temp_counter++;
         int saved_let = ctx->loop_expr_temp;
+        int saved_opt = ctx->loop_expr_optional;
         ctx->loop_expr_temp = t;
         ctx->loop_expr_type = rt;
+        ctx->loop_expr_optional = 1;  /* for loops are always optional */
 
-        if (is_ref_type(rt)) {
-            cg_emitf(ctx, "({ %s __loop_%d = NULL; ", type_to_c(rt), t);
+        const char *opt = opt_type_for(rt);
+        if (opt) {
+            cg_emitf(ctx, "({ %s __loop_%d; __loop_%d._has = false; ", opt, t, t);
         } else {
-            cg_emitf(ctx, "({ %s __loop_%d; ", type_to_c(rt), t);
+            cg_emitf(ctx, "({ %s __loop_%d = NULL; ", type_to_c(rt), t);
         }
+
         gen_for_header(ctx, expr);
         gen_block_with_scope(ctx, expr->data.for_expr.body, 1);
         cg_emitf(ctx, " __loop_%d; })", t);
         ctx->loop_expr_temp = saved_let;
+        ctx->loop_expr_optional = saved_opt;
         break;
     }
     default:
@@ -421,24 +568,59 @@ void gen_stmt(CodegenContext *ctx, ASTNode *node) {
         const char *cq = is_const ? "const " : "";
         Type *vt = value->resolved_type;
         TypeKind t = vt ? vt->kind : TK_UNKNOWN;
-        if (t == TK_STRING) {
+        int val_is_optional = vt ? vt->is_optional : 0;
+        if (val_is_optional && opt_type_for(t)) {
+            cg_emitf(ctx, "%s%s %s = ", cq, opt_type_for(t), name);
+        } else if (t == TK_STRING) {
             cg_emitf(ctx, "%s %s = ", type_to_c(t), name);
         } else {
             cg_emitf(ctx, "%s%s %s = ", cq, type_to_c(t), name);
         }
         gen_expr(ctx, value);
         cg_emit(ctx, ";\n");
-        if (t == TK_STRING) {
+        if (t == TK_STRING && !val_is_optional) {
             emit_retain(ctx, name, value);
-            scope_track_ref(ctx, name, t);
+            scope_track_ref(ctx, name, vt);
         }
         break;
     }
-    case NODE_IF:
+    case NODE_IF: {
+        /* Check for type narrowing: if x? { ... uses narrowed x ... } */
+        ASTNode *cond = node->data.if_expr.cond;
+        int narrowing = 0;
+        const char *narrow_name = NULL;
+
+        if (cond && cond->type == NODE_OPTIONAL_CHECK &&
+            cond->data.optional_check.operand->type == NODE_IDENT) {
+            ASTNode *operand = cond->data.optional_check.operand;
+            int operand_is_optional = operand->resolved_type && operand->resolved_type->is_optional;
+            TypeKind operand_kind = operand->resolved_type ? operand->resolved_type->kind : TK_UNKNOWN;
+            if (operand_is_optional && !is_ref_type(operand_kind)) {
+                narrowing = 1;
+                narrow_name = operand->data.ident.name;
+            }
+        }
+
         cg_emit(ctx, "if (");
-        gen_expr(ctx, node->data.if_expr.cond);
+        gen_expr(ctx, cond);
         cg_emit(ctx, ") ");
-        gen_block(ctx, node->data.if_expr.then_b);
+
+        if (narrowing && node->data.if_expr.then_b &&
+            node->data.if_expr.then_b->type == NODE_BLOCK) {
+            /* Push narrowing: references to narrow_name will emit name._val */
+            CGNarrow *n = malloc(sizeof(CGNarrow));
+            n->name = strdup(narrow_name);
+            n->next = ctx->narrowed;
+            ctx->narrowed = n;
+            gen_block(ctx, node->data.if_expr.then_b);
+            /* Pop narrowing */
+            ctx->narrowed = n->next;
+            free(n->name);
+            free(n);
+        } else {
+            gen_block(ctx, node->data.if_expr.then_b);
+        }
+
         if (node->data.if_expr.else_b) {
             cg_emit(ctx, " else ");
             if (node->data.if_expr.else_b->type == NODE_IF) {
@@ -451,6 +633,7 @@ void gen_stmt(CodegenContext *ctx, ASTNode *node) {
             cg_emit(ctx, "\n");
         }
         break;
+    }
     case NODE_WHILE:
         cg_emit(ctx, "while (");
         gen_expr(ctx, node->data.while_expr.cond);
@@ -477,6 +660,7 @@ void gen_stmt(CodegenContext *ctx, ASTNode *node) {
         }
         if (ctx->loop_expr_temp >= 0 && node->data.break_expr.value) {
             ASTNode *bv = node->data.break_expr.value;
+            int is_opt = ctx->loop_expr_optional && opt_type_for(ctx->loop_expr_type);
             if (bv->resolved_type && is_ref_type(bv->resolved_type->kind)) {
                 /* ARC: pre-eval value, retain-before-release, assign */
                 int t_val = ctx->temp_counter++;
@@ -491,13 +675,24 @@ void gen_stmt(CodegenContext *ctx, ASTNode *node) {
                     cg_emit_indent(ctx);
                 }
                 char lbuf[64];
-                snprintf(lbuf, sizeof(lbuf), "__loop_%d", ctx->loop_expr_temp);
+                snprintf(lbuf, sizeof(lbuf), is_opt ? "__loop_%d._val" : "__loop_%d",
+                         ctx->loop_expr_temp);
                 emit_release_call(ctx, lbuf, bv->resolved_type);
                 cg_emit(ctx, ";\n");
                 cg_emit_indent(ctx);
-                cg_emitf(ctx, "__loop_%d = %s;\n", ctx->loop_expr_temp, tname);
+                if (is_opt) {
+                    cg_emitf(ctx, "__loop_%d._has = true; __loop_%d._val = %s;\n",
+                          ctx->loop_expr_temp, ctx->loop_expr_temp, tname);
+                } else {
+                    cg_emitf(ctx, "__loop_%d = %s;\n", ctx->loop_expr_temp, tname);
+                }
             } else {
-                cg_emitf(ctx, "__loop_%d = ", ctx->loop_expr_temp);
+                if (is_opt) {
+                    cg_emitf(ctx, "__loop_%d._has = true; __loop_%d._val = ",
+                          ctx->loop_expr_temp, ctx->loop_expr_temp);
+                } else {
+                    cg_emitf(ctx, "__loop_%d = ", ctx->loop_expr_temp);
+                }
                 gen_expr(ctx, bv);
                 cg_emit(ctx, ";\n");
             }
@@ -520,6 +715,7 @@ void gen_stmt(CodegenContext *ctx, ASTNode *node) {
         }
         if (ctx->loop_expr_temp >= 0 && node->data.continue_expr.value) {
             ASTNode *cv = node->data.continue_expr.value;
+            int is_opt = ctx->loop_expr_optional && opt_type_for(ctx->loop_expr_type);
             if (cv->resolved_type && is_ref_type(cv->resolved_type->kind)) {
                 /* ARC: pre-eval value, retain-before-release, assign */
                 int t_val = ctx->temp_counter++;
@@ -534,13 +730,24 @@ void gen_stmt(CodegenContext *ctx, ASTNode *node) {
                     cg_emit_indent(ctx);
                 }
                 char lbuf[64];
-                snprintf(lbuf, sizeof(lbuf), "__loop_%d", ctx->loop_expr_temp);
+                snprintf(lbuf, sizeof(lbuf), is_opt ? "__loop_%d._val" : "__loop_%d",
+                         ctx->loop_expr_temp);
                 emit_release_call(ctx, lbuf, cv->resolved_type);
                 cg_emit(ctx, ";\n");
                 cg_emit_indent(ctx);
-                cg_emitf(ctx, "__loop_%d = %s;\n", ctx->loop_expr_temp, tname);
+                if (is_opt) {
+                    cg_emitf(ctx, "__loop_%d._has = true; __loop_%d._val = %s;\n",
+                          ctx->loop_expr_temp, ctx->loop_expr_temp, tname);
+                } else {
+                    cg_emitf(ctx, "__loop_%d = %s;\n", ctx->loop_expr_temp, tname);
+                }
             } else {
-                cg_emitf(ctx, "__loop_%d = ", ctx->loop_expr_temp);
+                if (is_opt) {
+                    cg_emitf(ctx, "__loop_%d._has = true; __loop_%d._val = ",
+                          ctx->loop_expr_temp, ctx->loop_expr_temp);
+                } else {
+                    cg_emitf(ctx, "__loop_%d = ", ctx->loop_expr_temp);
+                }
                 gen_expr(ctx, cv);
                 cg_emit(ctx, ";\n");
             }
@@ -556,17 +763,23 @@ void gen_stmt(CodegenContext *ctx, ASTNode *node) {
             cg_emit_indent(ctx);
             cg_emit(ctx, "return;\n");
         } else {
-            TypeKind rk = rv->resolved_type ? rv->resolved_type->kind : TK_UNKNOWN;
-            if (rk == TK_STRING) {
+            Type *rt = rv->resolved_type;
+            TypeKind rk = rt ? rt->kind : TK_UNKNOWN;
+            if (rk == TK_VOID || rk == TK_UNKNOWN) {
+                emit_all_scope_releases(ctx);
+                cg_emit_indent(ctx);
+                cg_emit(ctx, "return ");
+                gen_expr(ctx, rv);
+                cg_emit(ctx, ";\n");
+            } else if (rk == TK_STRING) {
                 /* Save to temp, retain, release scopes, return */
                 int t = ctx->temp_counter++;
                 cg_emitf(ctx, "ZnString *__ret%d = ", t);
                 gen_expr(ctx, rv);
                 cg_emit(ctx, ";\n");
-                if (!rv->is_fresh_alloc) {
-                    cg_emit_indent(ctx);
-                    cg_emitf(ctx, "__zn_str_retain(__ret%d);\n", t);
-                }
+                char tmp_name[32];
+                snprintf(tmp_name, sizeof(tmp_name), "__ret%d", t);
+                emit_retain(ctx, tmp_name, rv);
                 emit_all_scope_releases(ctx);
                 cg_emit_indent(ctx);
                 cg_emitf(ctx, "return __ret%d;\n", t);
@@ -640,7 +853,13 @@ void gen_func_proto(CodegenContext *ctx, ASTNode *func, int to_header) {
     if (strcmp(func->data.func_def.name, "main") == 0) {
         ret_str = "int";
     } else {
-        ret_str = type_to_c(ret_type);
+        /* Check if return type is optional */
+        int ret_is_optional = sym && sym->type->is_optional;
+        if (ret_is_optional && opt_type_for(ret_type)) {
+            ret_str = opt_type_for(ret_type);
+        } else {
+            ret_str = type_to_c(ret_type);
+        }
     }
 
     fprintf(out, "%s %s(", ret_str, func->data.func_def.name);
@@ -649,8 +868,13 @@ void gen_func_proto(CodegenContext *ctx, ASTNode *func, int to_header) {
     for (NodeList *p = func->data.func_def.params; p; p = p->next) {
         if (!first) fprintf(out, ", ");
         TypeInfo *ti = p->node->data.param.type_info;
-        fprintf(out, "const %s %s", type_to_c(ti->kind),
-                p->node->data.param.name);
+        if (ti->is_optional && opt_type_for(ti->kind)) {
+            fprintf(out, "const %s %s", opt_type_for(ti->kind),
+                    p->node->data.param.name);
+        } else {
+            fprintf(out, "const %s %s", type_to_c(ti->kind),
+                    p->node->data.param.name);
+        }
         first = 0;
     }
 
@@ -707,14 +931,27 @@ void gen_func_body(CodegenContext *ctx, ASTNode *block, TypeKind ret_type) {
             cg_emit_indent(ctx);
             cg_emitf(ctx, "return __ret%d;\n", t);
         } else {
-            int t = ctx->temp_counter++;
-            cg_emit_indent(ctx);
-            cg_emitf(ctx, "%s __ret%d = ", type_to_c(ret_type), t);
-            gen_expr(ctx, last_node);
-            cg_emit(ctx, ";\n");
-            emit_scope_releases(ctx);
-            cg_emit_indent(ctx);
-            cg_emitf(ctx, "return __ret%d;\n", t);
+            /* Check if function returns an optional type */
+            int last_is_optional = last_node->resolved_type ? last_node->resolved_type->is_optional : 0;
+            if (last_is_optional && opt_type_for(last_kind)) {
+                int t = ctx->temp_counter++;
+                cg_emit_indent(ctx);
+                cg_emitf(ctx, "%s __ret%d = ", opt_type_for(last_kind), t);
+                gen_expr(ctx, last_node);
+                cg_emit(ctx, ";\n");
+                emit_scope_releases(ctx);
+                cg_emit_indent(ctx);
+                cg_emitf(ctx, "return __ret%d;\n", t);
+            } else {
+                int t = ctx->temp_counter++;
+                cg_emit_indent(ctx);
+                cg_emitf(ctx, "%s __ret%d = ", type_to_c(ret_type), t);
+                gen_expr(ctx, last_node);
+                cg_emit(ctx, ";\n");
+                emit_scope_releases(ctx);
+                cg_emit_indent(ctx);
+                cg_emitf(ctx, "return __ret%d;\n", t);
+            }
         }
     } else {
         emit_scope_releases(ctx);

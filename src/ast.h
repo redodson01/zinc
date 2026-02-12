@@ -29,6 +29,7 @@ typedef enum {
 /* Resolved type representation — used by semantic analysis and codegen. */
 typedef struct Type {
     TypeKind kind;
+    int is_optional;
 } Type;
 
 /* Type helpers */
@@ -40,6 +41,7 @@ int type_eq(const Type *a, const Type *b);
 /* TypeInfo for type specifications in function parameters */
 typedef struct TypeInfo {
     TypeKind kind;
+    int is_optional;        /* 1 if T?, 0 otherwise */
 } TypeInfo;
 
 typedef enum {
@@ -68,6 +70,7 @@ typedef enum {
     NODE_RETURN,
     NODE_FIELD_ACCESS,
     NODE_INDEX,
+    NODE_OPTIONAL_CHECK,
 } NodeType;
 
 typedef struct ASTNode ASTNode;
@@ -112,11 +115,13 @@ struct ASTNode {
         struct { ASTNode *value; } continue_expr;
         struct { ASTNode *object; char *field; } field_access;
         struct { ASTNode *object; ASTNode *index; } index_access;
+        struct { ASTNode *operand; } optional_check;
     } data;
 };
 
 /* Type info constructors */
 TypeInfo *make_type_info(TypeKind kind);
+TypeInfo *make_optional_type(TypeInfo *base);
 
 /* Constructor functions */
 ASTNode *make_program(NodeList *stmts);
@@ -144,6 +149,7 @@ ASTNode *make_call(char *name, NodeList *args);
 ASTNode *make_return(ASTNode *value);
 ASTNode *make_field_access(ASTNode *object, char *field);
 ASTNode *make_index_access(ASTNode *object, ASTNode *index);
+ASTNode *make_optional_check(ASTNode *operand);
 
 /* List utilities — O(1) append via tail pointer */
 NodeList *make_list(ASTNode *node);

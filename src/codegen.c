@@ -57,6 +57,16 @@ const char *type_to_c(TypeKind t) {
     }
 }
 
+const char *opt_type_for(TypeKind t) {
+    switch (t) {
+    case TK_INT:   return "ZnOpt_int";
+    case TK_FLOAT: return "ZnOpt_float";
+    case TK_BOOL:  return "ZnOpt_bool";
+    case TK_CHAR:  return "ZnOpt_char";
+    default:       return NULL;
+    }
+}
+
 int is_ref_type(TypeKind t) {
     return t == TK_STRING;
 }
@@ -249,6 +259,9 @@ static void ast_walk(ASTNode *node, ASTVisitor visitor, void *data) {
     case NODE_INDEX:
         ast_walk(node->data.index_access.object, visitor, data);
         ast_walk(node->data.index_access.index, visitor, data);
+        break;
+    case NODE_OPTIONAL_CHECK:
+        ast_walk(node->data.optional_check.operand, visitor, data);
         break;
     default: break;
     }

@@ -1,0 +1,36 @@
+# Optional function parameter tests
+
+func double_or_zero(val: int?) {
+    if val? {
+        val * 2
+    } else {
+        0
+    }
+}
+
+func greet(name: String?) {
+    if name? {
+        print("hello ${name}\n")
+    } else {
+        print("hello stranger\n")
+    }
+    0
+}
+
+func main() {
+    # Pass a value to optional int param
+    let a = double_or_zero(21)
+
+    # Pass none (from if-without-else when false)
+    let none_val = if false { 1 }
+    let b = double_or_zero(none_val)
+
+    # Optional string param with value
+    greet("world")
+
+    # Optional string param with none
+    let no_name = if false { "x" }
+    greet(no_name)
+
+    0
+}

@@ -8,7 +8,7 @@
 /* Scope variable tracking for ARC */
 typedef struct CGScopeVar {
     char *name;
-    char *type_name;   /* "ZnString" for strings */
+    char *type_name;   /* "zn_str" for strings */
     struct CGScopeVar *next;
 } CGScopeVar;
 
@@ -18,6 +18,12 @@ typedef struct CGScope {
     int is_loop;
     struct CGScope *parent;
 } CGScope;
+
+/* Narrowing tracking for optional value types */
+typedef struct CGNarrow {
+    char *name;
+    struct CGNarrow *next;
+} CGNarrow;
 
 /* Code generation context */
 typedef struct {
@@ -29,8 +35,10 @@ typedef struct {
     int string_counter;          /* Number of string literals collected */
     const char *output_base;
     int loop_expr_temp;          /* >= 0 when loop is in expression context */
+    int loop_expr_optional;      /* 1 when current loop expression produces optional */
     TypeKind loop_expr_type;     /* type of current loop expression result */
     CGScope *scope;
+    CGNarrow *narrowed;          /* Stack of narrowed optional variables */
     const char *source_file;     /* Source file name for #line directives */
 } CodegenContext;
 
@@ -52,6 +60,7 @@ void cg_emit_header(CodegenContext *ctx, const char *s);
 /* --- Type helpers (codegen.c) --- */
 
 const char *type_to_c(TypeKind t);
+const char *opt_type_for(TypeKind t);
 int is_ref_type(TypeKind t);
 int expr_is_string(ASTNode *expr);
 

@@ -155,6 +155,7 @@ static char *str_buf_finish(ScannerExtra *extra) {
 "="             { return ASSIGN; }
 "!"             { return NOT; }
 "."             { return DOT; }
+"?"             { return QUESTION; }
 
 .               { fprintf(stderr, "Unknown char '%c' at line %d\n", yytext[0], yylineno); }
 

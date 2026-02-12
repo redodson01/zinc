@@ -22,6 +22,11 @@
 
 typedef struct { int32_t _rc; int32_t _len; char _data[]; } ZnString;
 
+typedef struct { bool _has; int64_t _val; } ZnOpt_int;
+typedef struct { bool _has; double _val; } ZnOpt_float;
+typedef struct { bool _has; bool _val; } ZnOpt_bool;
+typedef struct { bool _has; char _val; } ZnOpt_char;
+
 /* --- String runtime --- */
 
 static inline void __zn_str_retain(ZnString *s) {

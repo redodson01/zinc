@@ -152,7 +152,7 @@ static const char *type_kind_name(TypeKind t) {
 
 /* Type inference — sets resolved_type on nodes */
 Type *get_expr_type(SemanticContext *ctx, ASTNode *expr) {
-    static Type void_type = {TK_VOID};
+    static Type void_type = {TK_VOID, 0};
     if (!expr) return &void_type;
 
     /* Return cached type if already resolved */
@@ -259,6 +259,9 @@ Type *get_expr_type(SemanticContext *ctx, ASTNode *expr) {
     case NODE_INDEX:
         /* resolved_type already set during analyze_expr */
         result = expr->resolved_type ? expr->resolved_type->kind : TK_UNKNOWN;
+        break;
+    case NODE_OPTIONAL_CHECK:
+        result = TK_BOOL;
         break;
     case NODE_IF:
     case NODE_WHILE:
@@ -425,7 +428,6 @@ static void analyze_expr(SemanticContext *ctx, ASTNode *expr) {
             break;
         }
 
-        /* No struct/class field access at commit 3 */
         semantic_errorf(ctx, expr->line, "field access on non-struct type");
         break;
     }
@@ -443,6 +445,27 @@ static void analyze_expr(SemanticContext *ctx, ASTNode *expr) {
         } else if (obj_type != TK_UNKNOWN) {
             semantic_errorf(ctx, expr->line, "index operator requires an array, hash, or string");
         }
+        break;
+    }
+    case NODE_OPTIONAL_CHECK: {
+        analyze_expr(ctx, expr->data.optional_check.operand);
+        ASTNode *operand = expr->data.optional_check.operand;
+        TypeKind ot = get_expr_type(ctx, operand)->kind;
+
+        /* Check if operand is optional or a reference type */
+        int is_opt = operand->resolved_type && operand->resolved_type->is_optional;
+        if (!is_opt && operand->type == NODE_IDENT) {
+            Symbol *sym = lookup(ctx, operand->data.ident.name);
+            if (sym) is_opt = sym->type->is_optional;
+        }
+
+        /* Reference types (String) are always checkable (NULL-based) */
+        if (!is_opt && ot != TK_STRING) {
+            semantic_errorf(ctx, expr->line, "cannot use '?' on non-optional type");
+        }
+
+        if (!expr->resolved_type) expr->resolved_type = type_new(TK_BOOL);
+        else expr->resolved_type->kind = TK_BOOL;
         break;
     }
     case NODE_IF:
@@ -479,7 +502,35 @@ static void analyze_stmt(SemanticContext *ctx, ASTNode *node) {
     }
     case NODE_IF: {
         analyze_expr(ctx, node->data.if_expr.cond);
-        analyze_block(ctx, node->data.if_expr.then_b);
+
+        /* Type narrowing: if the condition is `x?` where x is optional,
+           create a narrowed (non-optional) shadow in the then block */
+        ASTNode *cond = node->data.if_expr.cond;
+        int narrowing = 0;
+        if (cond && cond->type == NODE_OPTIONAL_CHECK &&
+            cond->data.optional_check.operand->type == NODE_IDENT) {
+            const char *narrow_name = cond->data.optional_check.operand->data.ident.name;
+            Symbol *orig = lookup(ctx, narrow_name);
+            if (orig && orig->type->is_optional) {
+                narrowing = 1;
+                /* Manually analyze then block with narrowed scope */
+                if (node->data.if_expr.then_b &&
+                    node->data.if_expr.then_b->type == NODE_BLOCK) {
+                    push_scope(ctx);
+                    Type *narrowed = type_clone(orig->type);
+                    narrowed->is_optional = 0;
+                    add_symbol(ctx, node->line, narrow_name, narrowed, orig->is_const);
+                    type_free(narrowed);
+                    analyze_stmts(ctx, node->data.if_expr.then_b->data.block.stmts);
+                    pop_scope(ctx);
+                }
+            }
+        }
+
+        if (!narrowing) {
+            analyze_block(ctx, node->data.if_expr.then_b);
+        }
+
         if (node->data.if_expr.else_b) {
             if (node->data.if_expr.else_b->type == NODE_IF) {
                 analyze_stmt(ctx, node->data.if_expr.else_b);
@@ -508,6 +559,20 @@ static void analyze_stmt(SemanticContext *ctx, ASTNode *node) {
                 else node->resolved_type->kind = then_t;
                 if (is_ref_type(then_t)) node->is_fresh_alloc = 1;
             }
+        } else {
+            /* If without else -> optional type */
+            ASTNode *then_b = node->data.if_expr.then_b;
+            if (then_b && then_b->type == NODE_BLOCK && then_b->data.block.stmts) {
+                NodeList *last = then_b->data.block.stmts;
+                while (last->next) last = last->next;
+                TypeKind then_t = get_expr_type(ctx, last->node)->kind;
+                if (then_t != TK_UNKNOWN && then_t != TK_VOID) {
+                    if (!node->resolved_type) node->resolved_type = type_new(then_t);
+                    else node->resolved_type->kind = then_t;
+                    node->resolved_type->is_optional = 1;
+                    if (is_ref_type(then_t)) node->is_fresh_alloc = 1;
+                }
+            }
         }
         break;
     }
@@ -523,6 +588,11 @@ static void analyze_stmt(SemanticContext *ctx, ASTNode *node) {
         if (ctx->loop_result_set && ctx->loop_result_type) {
             type_free(node->resolved_type);
             node->resolved_type = type_clone(ctx->loop_result_type);
+            /* Infinite loops (while true, until false) produce non-optional.
+               Conditional loops produce optional. */
+            if (!is_always_true(node->data.while_expr.cond)) {
+                node->resolved_type->is_optional = 1;
+            }
             if (is_ref_type(node->resolved_type->kind)) node->is_fresh_alloc = 1;
         }
         type_free(ctx->loop_result_type);
@@ -552,6 +622,7 @@ static void analyze_stmt(SemanticContext *ctx, ASTNode *node) {
         if (ctx->loop_result_set && ctx->loop_result_type) {
             type_free(node->resolved_type);
             node->resolved_type = type_clone(ctx->loop_result_type);
+            node->resolved_type->is_optional = 1;  /* for loops are always conditional */
             if (is_ref_type(node->resolved_type->kind)) node->is_fresh_alloc = 1;
         }
         type_free(ctx->loop_result_type);
@@ -621,6 +692,17 @@ static void analyze_stmt(SemanticContext *ctx, ASTNode *node) {
             free(param_types);
         }
 
+        /* Store param types on function symbol (with is_optional) */
+        if (func_sym && param_count > 0) {
+            int i = 0;
+            for (NodeList *p = node->data.func_def.params; p; p = p->next, i++) {
+                TypeInfo *ti = p->node->data.param.type_info;
+                type_free(func_sym->param_types[i]);
+                func_sym->param_types[i] = type_new(ti->kind);
+                func_sym->param_types[i]->is_optional = ti->is_optional;
+            }
+        }
+
         /* Analyze function body in new scope */
         push_scope(ctx);
 
@@ -628,6 +710,7 @@ static void analyze_stmt(SemanticContext *ctx, ASTNode *node) {
         for (NodeList *p = node->data.func_def.params; p; p = p->next) {
             TypeInfo *ti = p->node->data.param.type_info;
             Type *ptype = type_new(ti->kind);
+            ptype->is_optional = ti->is_optional;
             add_symbol(ctx, p->node->line, p->node->data.param.name, ptype, 1);
             type_free(ptype);
         }
