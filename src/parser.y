@@ -64,9 +64,10 @@
 %type <node> struct_def class_def struct_field arg_or_named
 %type <node> interp_parts
 %type <list> top_level_list expr_list param_list arg_list struct_field_list
-%type <list> tuple_rest named_tuple_rest
+%type <list> tuple_rest named_tuple_rest object_field_list
 
 %type <type> type_spec
+%type <type_field> object_type_fields object_type_field
 %type <type_field> tuple_type_elems tuple_type_elem
 
 %right BREAK CONTINUE RETURN
@@ -118,6 +119,7 @@ type_spec:
     | TYPE_BOOL                         { $$ = make_type_info(TK_BOOL); }
     | TYPE_CHAR                         { $$ = make_type_info(TK_CHAR); }
     | IDENTIFIER                        { $$ = make_struct_type_info($1); }
+    | LBRACE object_type_fields RBRACE  { $$ = make_object_type_info($2); }
     | type_spec QUESTION                { $$ = make_optional_type($1); }
     | LPAREN tuple_type_elems RPAREN   { $$ = make_tuple_type_info($2); }
     ;
@@ -135,6 +137,14 @@ tuple_type_elem:
     IDENTIFIER COLON type_spec          { $$ = make_type_info_field($1, $3); }
     | type_spec                         { $$ = make_type_info_field(NULL, $1); }
     ;
+
+object_type_fields:
+    object_type_field                               { $$ = $1; }
+    | object_type_fields COMMA object_type_field    { $$ = type_info_field_append($1, $3); }
+    ;
+
+object_type_field:
+    IDENTIFIER COLON type_spec  { $$ = make_type_info_field($1, $3); }
 
 block:
     LBRACE expr_list RBRACE             { $$ = make_block($2); }
@@ -202,6 +212,8 @@ expr:
         { NodeList *elems = make_list(make_named_arg($2, $4));
           elems->tail->next = $6; elems->tail = $6->tail;
           $$ = make_tuple(elems); $$->line = @1.first_line; }
+    /* Anonymous object literal */
+    | LBRACE object_field_list RBRACE   { $$ = make_object_literal($2); $$->line = @1.first_line; }
     /* Control flow expressions */
     | if_expr                           { $$ = $1; }
     | unless_expr                       { $$ = $1; }
@@ -309,6 +321,13 @@ named_tuple_rest:
     IDENTIFIER COLON expr               { $$ = make_list(make_named_arg($1, $3)); }
     | named_tuple_rest COMMA IDENTIFIER COLON expr
                                         { $$ = list_append($1, make_named_arg($3, $5)); }
+    ;
+
+object_field_list:
+    IDENTIFIER COLON expr
+        { $$ = make_list(make_named_arg($1, $3)); }
+    | object_field_list COMMA IDENTIFIER COLON expr
+        { $$ = list_append($1, make_named_arg($3, $5)); }
     ;
 
 primary:

@@ -100,5 +100,6 @@ void gen_func_def(CodegenContext *ctx, ASTNode *func);
 void gen_struct_def(CodegenContext *ctx, ASTNode *node);
 void gen_class_def(CodegenContext *ctx, ASTNode *node);
 void gen_tuple_typedefs(CodegenContext *ctx);
+void gen_object_typedefs(CodegenContext *ctx);
 
 #endif

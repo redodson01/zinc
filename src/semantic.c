@@ -152,7 +152,7 @@ static int is_always_true(ASTNode *expr) {
     if (!expr) return 0;
     /* Direct `true` literal */
     if (expr->type == NODE_BOOL && expr->data.bval) return 1;
-    /* `!false` -- produced by `until false` -> `while (!false)` */
+    /* `!false` — produced by `until false` -> `while (!false)` */
     if (expr->type == NODE_UNARYOP && expr->data.unaryop.op == OP_NOT) {
         ASTNode *inner = expr->data.unaryop.operand;
         if (inner && inner->type == NODE_BOOL && !inner->data.bval) return 1;
@@ -160,7 +160,7 @@ static int is_always_true(ASTNode *expr) {
     return 0;
 }
 
-/* Short suffix for building canonical type names (tuples) */
+/* Short suffix for building canonical type names (tuples, objects) */
 static const char *type_kind_suffix(TypeKind t) {
     switch (t) {
     case TK_INT:    return "int";
@@ -200,7 +200,7 @@ static const char *type_kind_name(TypeKind t) {
     }
 }
 
-/* Type inference -- sets resolved_type on nodes */
+/* Type inference — sets resolved_type on nodes */
 Type *get_expr_type(SemanticContext *ctx, ASTNode *expr) {
     static Type void_type = {TK_VOID, 0, NULL};
     if (!expr) return &void_type;
@@ -314,6 +314,7 @@ Type *get_expr_type(SemanticContext *ctx, ASTNode *expr) {
         result = TK_BOOL;
         break;
     case NODE_TUPLE:
+    case NODE_OBJECT_LITERAL:
         /* resolved_type already set during analyze_expr */
         result = expr->resolved_type ? expr->resolved_type->kind : TK_STRUCT;
         break;
@@ -398,7 +399,8 @@ static StructFieldDef *check_lvalue(SemanticContext *ctx, ASTNode *tgt, int line
     return NULL;
 }
 
-/* Resolve a TypeInfo with tuple fields into a registered StructDef.
+/* Resolve a TypeInfo with object/tuple fields into a registered StructDef.
+   Object types ({ name: type, ... }) become anonymous classes with __obj_ prefix (#5).
    Tuple types ((int, int) or (x: int, y: int)) become anonymous structs with __ZnTuple_ prefix. */
 static void resolve_type_info(SemanticContext *ctx, TypeInfo *ti) {
     if (!ti || !ti->fields) return;
@@ -468,6 +470,55 @@ static void resolve_type_info(SemanticContext *ctx, TypeInfo *ti) {
         ti->name = strdup(buf);
         return;
     }
+
+    if (!ti->is_object) return;
+
+    /* Recursively resolve nested object types */
+    for (TypeInfoField *f = ti->fields; f; f = f->next) {
+        resolve_type_info(ctx, f->type);
+    }
+
+    /* Build canonical name: __obj_field1_type1_field2_type2_... */
+    char buf[1024];
+    int pos = snprintf(buf, sizeof(buf), "__obj");
+    for (TypeInfoField *f = ti->fields; f; f = f->next) {
+        if ((f->type->kind == TK_STRUCT || f->type->kind == TK_CLASS) && f->type->name) {
+            pos += snprintf(buf + pos, sizeof(buf) - pos, "_%s_%s",
+                            f->name, f->type->name);
+        } else {
+            pos += snprintf(buf + pos, sizeof(buf) - pos, "_%s_%s",
+                            f->name, type_kind_suffix(f->type->kind));
+        }
+    }
+    char *type_name = strdup(buf);
+
+    /* Register as anonymous class if not already present */
+    StructDef *sd = lookup_struct(ctx, type_name);
+    if (!sd) {
+        sd = calloc(1, sizeof(StructDef));
+        sd->name = strdup(type_name);
+        sd->is_class = 1;
+        unsigned int si = hash_struct_name(type_name);
+        sd->next = ctx->struct_buckets[si];
+        ctx->struct_buckets[si] = sd;
+
+        StructFieldDef *fields_head = NULL, *fields_tail = NULL;
+        int count = 0;
+        for (TypeInfoField *f = ti->fields; f; f = f->next) {
+            StructFieldDef *fd = calloc(1, sizeof(StructFieldDef));
+            fd->name = strdup(f->name);
+            fd->type = type_from_info(f->type);
+            if (fields_tail) fields_tail->next = fd;
+            else fields_head = fd;
+            fields_tail = fd;
+            count++;
+        }
+        sd->fields = fields_head;
+        sd->field_count = count;
+    }
+
+    ti->kind = TK_CLASS;
+    ti->name = type_name;
 }
 
 static void analyze_expr(SemanticContext *ctx, ASTNode *expr) {
@@ -688,7 +739,7 @@ static void analyze_expr(SemanticContext *ctx, ASTNode *expr) {
                 semantic_errorf(ctx, expr->line, "string index must be an integer");
             }
         } else if (obj_type != TK_UNKNOWN) {
-            semantic_errorf(ctx, expr->line, "index operator requires an array, hash, or string");
+            semantic_errorf(ctx, expr->line, "index operator requires a string");
         }
         break;
     }
@@ -739,7 +790,7 @@ static void analyze_expr(SemanticContext *ctx, ASTNode *expr) {
             }
         }
 
-        /* Find or register anonymous type */
+        /* Find or register anonymous type (#5 -- shared pattern for tuples/objects) */
         StructDef *sd = lookup_struct(ctx, canonical);
         if (!sd) {
             sd = calloc(1, sizeof(StructDef));
@@ -780,6 +831,73 @@ static void analyze_expr(SemanticContext *ctx, ASTNode *expr) {
         if (!expr->resolved_type) expr->resolved_type = type_new(TK_STRUCT);
         else expr->resolved_type->kind = TK_STRUCT;
         expr->resolved_type->name = strdup(canonical);
+        break;
+    }
+    case NODE_OBJECT_LITERAL: {
+        NodeList *fields = expr->data.object_literal.fields;
+
+        /* All fields are NODE_NAMED_ARG (enforced by grammar) */
+        for (NodeList *f = fields; f; f = f->next) {
+            ASTNode *na = f->node;
+            analyze_expr(ctx, na->data.named_arg.value);
+            get_expr_type(ctx, na->data.named_arg.value);
+        }
+
+        /* Build canonical name: __obj_field1_type1_field2_type2 */
+        char buf[1024];
+        int pos = snprintf(buf, sizeof(buf), "__obj");
+        for (NodeList *f = fields; f; f = f->next) {
+            ASTNode *na = f->node;
+            TypeKind tk = na->data.named_arg.value->resolved_type
+                ? na->data.named_arg.value->resolved_type->kind : TK_UNKNOWN;
+            const char *suffix;
+            if ((tk == TK_STRUCT || tk == TK_CLASS) && na->data.named_arg.value->resolved_type
+                && na->data.named_arg.value->resolved_type->name) {
+                suffix = na->data.named_arg.value->resolved_type->name;
+            } else {
+                suffix = type_kind_suffix(tk);
+            }
+            pos += snprintf(buf + pos, sizeof(buf) - pos, "_%s_%s",
+                            na->data.named_arg.name, suffix);
+        }
+        char *type_name = strdup(buf);
+
+        /* Register anonymous class if not already present (#5 -- shared pattern) */
+        StructDef *sd = lookup_struct(ctx, type_name);
+        if (!sd) {
+            sd = calloc(1, sizeof(StructDef));
+            sd->name = strdup(type_name);
+            sd->is_class = 1;
+            unsigned int si = hash_struct_name(type_name);
+            sd->next = ctx->struct_buckets[si];
+            ctx->struct_buckets[si] = sd;
+
+            StructFieldDef *fields_head = NULL, *fields_tail = NULL;
+            int count = 0;
+            for (NodeList *f = fields; f; f = f->next) {
+                ASTNode *na = f->node;
+                StructFieldDef *fd = calloc(1, sizeof(StructFieldDef));
+                fd->name = strdup(na->data.named_arg.name);
+                TypeKind tk = na->data.named_arg.value->resolved_type
+                    ? na->data.named_arg.value->resolved_type->kind : TK_UNKNOWN;
+                fd->type = type_new(tk);
+                Type *rt = na->data.named_arg.value->resolved_type;
+                if ((tk == TK_STRUCT || tk == TK_CLASS) && rt && rt->name)
+                    fd->type->name = strdup(rt->name);
+                if (fields_tail) fields_tail->next = fd;
+                else fields_head = fd;
+                fields_tail = fd;
+                count++;
+            }
+            sd->fields = fields_head;
+            sd->field_count = count;
+        }
+
+        if (!expr->resolved_type) expr->resolved_type = type_new(TK_CLASS);
+        else expr->resolved_type->kind = TK_CLASS;
+        expr->resolved_type->name = strdup(type_name);
+        expr->is_fresh_alloc = 1;
+        free(type_name);
         break;
     }
     case NODE_OPTIONAL_CHECK: {
@@ -1086,7 +1204,7 @@ static void analyze_stmt(SemanticContext *ctx, ASTNode *node) {
         break;
     }
     case NODE_FUNC_DEF: {
-        /* Resolve tuple types in parameters */
+        /* Resolve object types in parameters */
         for (NodeList *p = node->data.func_def.params; p; p = p->next) {
             resolve_type_info(ctx, p->node->data.param.type_info);
         }

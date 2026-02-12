@@ -296,6 +296,12 @@ ASTNode *make_tuple(NodeList *elements) {
     return n;
 }
 
+ASTNode *make_object_literal(NodeList *fields) {
+    ASTNode *n = alloc_node(NODE_OBJECT_LITERAL);
+    n->data.object_literal.fields = fields;
+    return n;
+}
+
 TypeInfoField *make_type_info_field(char *name, TypeInfo *type) {
     TypeInfoField *f = calloc(1, sizeof(TypeInfoField));
     f->name = name;
@@ -309,6 +315,14 @@ TypeInfoField *type_info_field_append(TypeInfoField *list, TypeInfoField *field)
     while (cur->next) cur = cur->next;
     cur->next = field;
     return list;
+}
+
+TypeInfo *make_object_type_info(TypeInfoField *fields) {
+    TypeInfo *t = calloc(1, sizeof(TypeInfo));
+    t->kind = TK_STRUCT;
+    t->fields = fields;
+    t->is_object = 1;
+    return t;
 }
 
 TypeInfo *make_struct_type_info(char *name) {
@@ -565,6 +579,11 @@ void print_ast(ASTNode *node, int indent) {
         for (NodeList *l = node->data.tuple.elements; l; l = l->next)
             print_ast(l->node, indent + 1);
         break;
+    case NODE_OBJECT_LITERAL:
+        printf("ObjectLiteral\n");
+        for (NodeList *f = node->data.object_literal.fields; f; f = f->next)
+            print_ast(f->node, indent + 1);
+        break;
     }
 }
 
@@ -665,6 +684,9 @@ void free_ast(ASTNode *node) {
         break;
     case NODE_TUPLE:
         free_list(node->data.tuple.elements);
+        break;
+    case NODE_OBJECT_LITERAL:
+        free_list(node->data.object_literal.fields);
         break;
     }
     type_free(node->resolved_type);

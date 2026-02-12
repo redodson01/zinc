@@ -562,6 +562,28 @@ void gen_expr(CodegenContext *ctx, ASTNode *expr) {
         }
         break;
     }
+    case NODE_OBJECT_LITERAL: {
+        const char *type_name = expr->resolved_type ? expr->resolved_type->name : NULL;
+        int t = ctx->temp_counter++;
+        cg_emitf(ctx, "({ %s *__t%d = __%s_alloc(); ", type_name, t, type_name);
+        for (NodeList *f = expr->data.object_literal.fields; f; f = f->next) {
+            ASTNode *na = f->node;
+            cg_emitf(ctx, "__t%d->%s = ", t, na->data.named_arg.name);
+            gen_expr(ctx, na->data.named_arg.value);
+            cg_emit(ctx, "; ");
+
+            /* Retain reference-type fields */
+            Type *ftype = na->data.named_arg.value->resolved_type;
+            if (ftype && is_ref_type(ftype->kind) && !na->data.named_arg.value->is_fresh_alloc) {
+                char buf[128];
+                snprintf(buf, sizeof(buf), "__t%d->%s", t, na->data.named_arg.name);
+                emit_retain_call(ctx, buf, ftype);
+                cg_emit(ctx, "; ");
+            }
+        }
+        cg_emitf(ctx, "__t%d; })", t);
+        break;
+    }
     case NODE_INDEX:
         /* String indexing */
         cg_emit(ctx, "(");
