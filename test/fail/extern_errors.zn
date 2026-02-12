@@ -1,0 +1,14 @@
+# ERRORS: 3
+# Test: Cannot assign to extern symbols
+
+extern {
+    var zn_test_counter: int
+    let ZN_TEST_CONST: int
+}
+
+func main() {
+    zn_test_counter = 0           # Error: cannot assign to extern
+    zn_test_counter += 1          # Error: cannot assign to extern
+    ZN_TEST_CONST = 0             # Error: cannot assign to constant
+    0
+}

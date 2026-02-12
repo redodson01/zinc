@@ -105,6 +105,10 @@ typedef enum {
     NODE_ARRAY_LITERAL,
     NODE_HASH_LITERAL,
     NODE_HASH_PAIR,
+    NODE_EXTERN_BLOCK,
+    NODE_EXTERN_FUNC,
+    NODE_EXTERN_VAR,
+    NODE_EXTERN_LET,
     NODE_TYPED_EMPTY_ARRAY,
     NODE_TYPED_EMPTY_HASH,
 } NodeType;
@@ -160,6 +164,10 @@ struct ASTNode {
         struct { NodeList *elems; } array_literal;
         struct { NodeList *pairs; } hash_literal;
         struct { ASTNode *key; ASTNode *value; } hash_pair;
+        struct { NodeList *decls; } extern_block;
+        struct { char *name; NodeList *params; TypeInfo *return_type; } extern_func;
+        struct { char *name; TypeInfo *type_info; } extern_var;
+        struct { char *name; TypeInfo *type_info; } extern_let;
         struct { TypeKind elem_type; char *elem_name; } typed_empty_array;
         struct { TypeKind key_type; TypeKind value_type; char *value_name; } typed_empty_hash;
     } data;
@@ -198,6 +206,10 @@ ASTNode *make_index_access(ASTNode *object, ASTNode *index);
 ASTNode *make_array_literal(NodeList *elems);
 ASTNode *make_hash_literal(NodeList *pairs);
 ASTNode *make_hash_pair(ASTNode *key, ASTNode *value);
+ASTNode *make_extern_block(NodeList *decls);
+ASTNode *make_extern_func(char *name, NodeList *params, TypeInfo *return_type);
+ASTNode *make_extern_var(char *name, TypeInfo *type_info);
+ASTNode *make_extern_let(char *name, TypeInfo *type_info);
 ASTNode *make_optional_check(ASTNode *operand);
 ASTNode *make_typed_empty_array(TypeKind elem_type);
 ASTNode *make_typed_empty_array_named(char *type_name);

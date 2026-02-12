@@ -1,5 +1,5 @@
 /*
- * Code generation for Zinc -> C transpilation.
+ * Code generation for Zinc → C transpilation.
  *
  * Expression-oriented control flow uses GCC statement expressions ({ ... })
  * so that `if`, `while`, and `for` can appear in value positions.
@@ -8,7 +8,7 @@
  *
  * Split into three files:
  *   codegen.c       — shared infrastructure, emit helpers, ARC scope, generate()
- *   codegen_types.c — struct/class/tuple/object layout
+ *   codegen_types.c — struct/class/tuple/object layout, extern declarations
  *   codegen_expr.c  — expression/statement generation, function emission
  */
 #include <stdio.h>
@@ -354,6 +354,9 @@ static void ast_walk(ASTNode *node, ASTVisitor visitor, void *data) {
     case NODE_OPTIONAL_CHECK:
         ast_walk(node->data.optional_check.operand, visitor, data);
         break;
+    case NODE_EXTERN_BLOCK:
+        ast_walk_list(node->data.extern_block.decls, visitor, data);
+        break;
     default: break;
     }
 }
@@ -437,6 +440,13 @@ void generate(CodegenContext *ctx, ASTNode *root) {
     /* Collect string literals and emit static structs */
     collect_string_literals(ctx, root);
     cg_emit(ctx, "\n");
+
+    /* Generate extern declarations (to header) */
+    for (NodeList *s = root->data.program.stmts; s; s = s->next) {
+        if (s->node && s->node->type == NODE_EXTERN_BLOCK) {
+            gen_extern_block(ctx, s->node);
+        }
+    }
 
     /* Generate all functions */
     for (NodeList *s = root->data.program.stmts; s; s = s->next) {

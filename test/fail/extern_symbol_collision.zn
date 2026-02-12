@@ -1,0 +1,7 @@
+# ERRORS: 1
+# Extern function collides with existing function
+func foo() { 0 }
+extern {
+    func foo()
+}
+func main() { 0 }

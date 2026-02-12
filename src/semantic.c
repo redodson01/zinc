@@ -130,12 +130,30 @@ static Symbol *add_function(SemanticContext *ctx, int line, const char *name,
     sym->name = strdup(name);
     sym->type = type_clone(return_type);
     sym->is_function = 1;
+    sym->is_extern = is_extern;
     sym->param_count = param_count;
     if (param_count > 0) {
         sym->param_types = malloc(param_count * sizeof(Type*));
         for (int i = 0; i < param_count; i++)
             sym->param_types[i] = type_clone(param_types[i]);
     }
+    unsigned int idx = hash_name(name);
+    sym->next = ctx->current_scope->buckets[idx];
+    ctx->current_scope->buckets[idx] = sym;
+    return sym;
+}
+
+static Symbol *add_extern_var(SemanticContext *ctx, int line, const char *name,
+                               Type *type, int is_const) {
+    if (lookup_local(ctx->current_scope, name)) {
+        semantic_errorf(ctx, line, "symbol '%s' already declared in this scope", name);
+        return NULL;
+    }
+    Symbol *sym = calloc(1, sizeof(Symbol));
+    sym->name = strdup(name);
+    sym->type = type_clone(type);
+    sym->is_const = is_const;
+    sym->is_extern = 1;
     unsigned int idx = hash_name(name);
     sym->next = ctx->current_scope->buckets[idx];
     ctx->current_scope->buckets[idx] = sym;
@@ -160,6 +178,20 @@ static int is_always_true(ASTNode *expr) {
     return 0;
 }
 
+/* Check if expression is definitively void (extern void func) */
+static int is_definitely_void(SemanticContext *ctx, ASTNode *expr) {
+    if (!expr) return 0;
+    if (expr->type != NODE_CALL) return 0;
+    Symbol *sym = lookup(ctx, expr->data.call.name);
+    return (sym && sym->is_function && sym->is_extern && sym->type->kind == TK_VOID);
+}
+
+static void check_not_void(SemanticContext *ctx, int line, ASTNode *expr, const char *context) {
+    if (is_definitely_void(ctx, expr)) {
+        semantic_errorf(ctx, line, "cannot use void expression %s", context);
+    }
+}
+
 /* Short suffix for building canonical type names (tuples, objects) */
 static const char *type_kind_suffix(TypeKind t) {
     switch (t) {
@@ -171,19 +203,6 @@ static const char *type_kind_suffix(TypeKind t) {
     case TK_ARRAY:  return "arr";
     case TK_HASH:   return "hash";
     default:        return "unk";
-    }
-}
-
-static int is_definitely_void(SemanticContext *ctx, ASTNode *expr) {
-    if (!expr) return 0;
-    if (expr->type != NODE_CALL) return 0;
-    Symbol *sym = lookup(ctx, expr->data.call.name);
-    return (sym && sym->is_function && sym->type->kind == TK_VOID);
-}
-
-static void check_not_void(SemanticContext *ctx, int line, ASTNode *expr, const char *context) {
-    if (is_definitely_void(ctx, expr)) {
-        semantic_errorf(ctx, line, "cannot use void expression %s", context);
     }
 }
 
@@ -548,9 +567,12 @@ static void analyze_expr(SemanticContext *ctx, ASTNode *expr) {
     case NODE_BINOP:
         analyze_expr(ctx, expr->data.binop.left);
         analyze_expr(ctx, expr->data.binop.right);
+        check_not_void(ctx, expr->line, expr->data.binop.left, "as operand");
+        check_not_void(ctx, expr->line, expr->data.binop.right, "as operand");
         break;
     case NODE_UNARYOP:
         analyze_expr(ctx, expr->data.unaryop.operand);
+        check_not_void(ctx, expr->line, expr->data.unaryop.operand, "as operand");
         break;
     case NODE_ASSIGN: {
         analyze_expr(ctx, expr->data.assign.target);
@@ -660,6 +682,7 @@ static void analyze_expr(SemanticContext *ctx, ASTNode *expr) {
         for (NodeList *arg = expr->data.call.args; arg; arg = arg->next) {
             analyze_expr(ctx, arg->node);
             get_expr_type(ctx, arg->node);
+            check_not_void(ctx, expr->line, arg->node, "as function argument");
             arg_count++;
         }
 
@@ -833,7 +856,7 @@ static void analyze_expr(SemanticContext *ctx, ASTNode *expr) {
             }
         }
 
-        /* Find or register anonymous type (#5 — shared pattern for tuples/objects) */
+        /* Find or register anonymous type (#5 -- shared pattern for tuples/objects) */
         StructDef *sd = lookup_struct(ctx, canonical);
         if (!sd) {
             sd = calloc(1, sizeof(StructDef));
@@ -921,7 +944,7 @@ static void analyze_expr(SemanticContext *ctx, ASTNode *expr) {
         }
         char *type_name = strdup(buf);
 
-        /* Register anonymous class if not already present (#5 — shared pattern) */
+        /* Register anonymous class if not already present (#5 -- shared pattern) */
         StructDef *sd = lookup_struct(ctx, type_name);
         if (!sd) {
             sd = calloc(1, sizeof(StructDef));
@@ -1116,6 +1139,7 @@ static void analyze_stmt(SemanticContext *ctx, ASTNode *node) {
     }
     case NODE_IF: {
         analyze_expr(ctx, node->data.if_expr.cond);
+        check_not_void(ctx, node->line, node->data.if_expr.cond, "as condition");
 
         /* Type narrowing: if the condition is `x?` where x is optional,
            create a narrowed (non-optional) shadow in the then block */
@@ -1229,6 +1253,7 @@ static void analyze_stmt(SemanticContext *ctx, ASTNode *node) {
             analyze_stmt(ctx, node->data.for_expr.init);
         }
         analyze_expr(ctx, node->data.for_expr.cond);
+        check_not_void(ctx, node->line, node->data.for_expr.cond, "as condition");
         if (node->data.for_expr.update) {
             analyze_expr(ctx, node->data.for_expr.update);
         }
@@ -1445,6 +1470,49 @@ static void analyze_stmt(SemanticContext *ctx, ASTNode *node) {
         type_free(ctx->current_func_return_type);
         ctx->current_func_return_type = old_return_type;
         pop_scope(ctx);
+        break;
+    }
+    case NODE_EXTERN_BLOCK:
+        for (NodeList *d = node->data.extern_block.decls; d; d = d->next) {
+            analyze_stmt(ctx, d->node);
+        }
+        break;
+    case NODE_EXTERN_FUNC: {
+        int param_count = 0;
+        for (NodeList *p = node->data.extern_func.params; p; p = p->next) {
+            param_count++;
+        }
+        Type **param_types = NULL;
+        if (param_count > 0) {
+            param_types = malloc(param_count * sizeof(Type*));
+            int i = 0;
+            for (NodeList *p = node->data.extern_func.params; p; p = p->next, i++) {
+                param_types[i] = type_from_info(p->node->data.param.type_info);
+            }
+        }
+        Type *ret_type = node->data.extern_func.return_type
+            ? type_from_info(node->data.extern_func.return_type)
+            : type_new(TK_VOID);
+        add_function(ctx, node->line, node->data.extern_func.name,
+                     ret_type, param_count, param_types, 1);
+        type_free(ret_type);
+        if (param_types) {
+            for (int i = 0; i < param_count; i++)
+                type_free(param_types[i]);
+            free(param_types);
+        }
+        break;
+    }
+    case NODE_EXTERN_VAR: {
+        Type *vtype = type_from_info(node->data.extern_var.type_info);
+        add_extern_var(ctx, node->line, node->data.extern_var.name, vtype, 0);
+        type_free(vtype);
+        break;
+    }
+    case NODE_EXTERN_LET: {
+        Type *ltype = type_from_info(node->data.extern_let.type_info);
+        add_extern_var(ctx, node->line, node->data.extern_let.name, ltype, 1);
+        type_free(ltype);
         break;
     }
     case NODE_RETURN:

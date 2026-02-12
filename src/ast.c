@@ -285,6 +285,34 @@ ASTNode *make_hash_pair(ASTNode *key, ASTNode *value) {
     return n;
 }
 
+ASTNode *make_extern_block(NodeList *decls) {
+    ASTNode *n = alloc_node(NODE_EXTERN_BLOCK);
+    n->data.extern_block.decls = decls;
+    return n;
+}
+
+ASTNode *make_extern_func(char *name, NodeList *params, TypeInfo *return_type) {
+    ASTNode *n = alloc_node(NODE_EXTERN_FUNC);
+    n->data.extern_func.name = name;
+    n->data.extern_func.params = params;
+    n->data.extern_func.return_type = return_type;
+    return n;
+}
+
+ASTNode *make_extern_var(char *name, TypeInfo *type_info) {
+    ASTNode *n = alloc_node(NODE_EXTERN_VAR);
+    n->data.extern_var.name = name;
+    n->data.extern_var.type_info = type_info;
+    return n;
+}
+
+ASTNode *make_extern_let(char *name, TypeInfo *type_info) {
+    ASTNode *n = alloc_node(NODE_EXTERN_LET);
+    n->data.extern_let.name = name;
+    n->data.extern_let.type_info = type_info;
+    return n;
+}
+
 ASTNode *make_optional_check(ASTNode *operand) {
     ASTNode *n = alloc_node(NODE_OPTIONAL_CHECK);
     n->data.optional_check.operand = operand;
@@ -666,6 +694,35 @@ void print_ast(ASTNode *node, int indent) {
         print_ast(node->data.hash_pair.key, indent + 1);
         print_ast(node->data.hash_pair.value, indent + 1);
         break;
+    case NODE_EXTERN_BLOCK:
+        printf("ExternBlock\n");
+        for (NodeList *l = node->data.extern_block.decls; l; l = l->next)
+            print_ast(l->node, indent + 1);
+        break;
+    case NODE_EXTERN_FUNC:
+        printf("ExternFunc: %s(", node->data.extern_func.name);
+        for (NodeList *l = node->data.extern_func.params; l; l = l->next) {
+            printf("%s: ", l->node->data.param.name);
+            print_type_info(l->node->data.param.type_info);
+            if (l->next) printf(", ");
+        }
+        printf(")");
+        if (node->data.extern_func.return_type) {
+            printf(" -> ");
+            print_type_info(node->data.extern_func.return_type);
+        }
+        printf("\n");
+        break;
+    case NODE_EXTERN_VAR:
+        printf("ExternVar: %s: ", node->data.extern_var.name);
+        print_type_info(node->data.extern_var.type_info);
+        printf("\n");
+        break;
+    case NODE_EXTERN_LET:
+        printf("ExternLet: %s: ", node->data.extern_let.name);
+        print_type_info(node->data.extern_let.type_info);
+        printf("\n");
+        break;
     case NODE_TYPED_EMPTY_ARRAY:
         printf("TypedEmptyArray: elem=%d\n", node->data.typed_empty_array.elem_type);
         break;
@@ -787,6 +844,22 @@ void free_ast(ASTNode *node) {
     case NODE_HASH_PAIR:
         free_ast(node->data.hash_pair.key);
         free_ast(node->data.hash_pair.value);
+        break;
+    case NODE_EXTERN_BLOCK:
+        free_list(node->data.extern_block.decls);
+        break;
+    case NODE_EXTERN_FUNC:
+        free(node->data.extern_func.name);
+        free_list(node->data.extern_func.params);
+        free_type_info(node->data.extern_func.return_type);
+        break;
+    case NODE_EXTERN_VAR:
+        free(node->data.extern_var.name);
+        free_type_info(node->data.extern_var.type_info);
+        break;
+    case NODE_EXTERN_LET:
+        free(node->data.extern_let.name);
+        free_type_info(node->data.extern_let.type_info);
         break;
     case NODE_TYPED_EMPTY_ARRAY:
         free(node->data.typed_empty_array.elem_name);

@@ -51,7 +51,7 @@
 %token IF UNLESS ELSE
 %token WHILE UNTIL FOR
 %token BREAK CONTINUE
-%token FUNC RETURN STRUCT CLASS
+%token FUNC RETURN STRUCT CLASS EXTERN ARROW
 %token EQ NE LE GE AND OR
 %token PLUS_ASSIGN MINUS_ASSIGN STAR_ASSIGN SLASH_ASSIGN PERCENT_ASSIGN
 %token INCREMENT DECREMENT
@@ -62,9 +62,9 @@
 %type <node> program expr primary block interp_string
 %type <node> if_expr unless_expr while_expr until_expr for_expr
 %type <node> func_def param for_init for_update
-%type <node> struct_def class_def struct_field arg_or_named
+%type <node> struct_def class_def struct_field arg_or_named extern_block extern_decl
 %type <node> interp_parts
-%type <list> top_level_list expr_list param_list arg_list struct_field_list
+%type <list> top_level_list expr_list param_list arg_list struct_field_list extern_decl_list
 %type <list> tuple_rest named_tuple_rest object_field_list array_elems hash_pairs
 
 %type <type> type_spec
@@ -94,14 +94,37 @@ top_level_list:
     func_def                        { $$ = make_list($1); }
     | struct_def                    { $$ = make_list($1); }
     | class_def                     { $$ = make_list($1); }
+    | extern_block                  { $$ = make_list($1); }
     | top_level_list func_def       { $$ = list_append($1, $2); }
     | top_level_list struct_def     { $$ = list_append($1, $2); }
     | top_level_list class_def      { $$ = list_append($1, $2); }
+    | top_level_list extern_block   { $$ = list_append($1, $2); }
     ;
 
 func_def:
     FUNC IDENTIFIER LPAREN param_list RPAREN block
         { $$ = make_func_def($2, $4, $6); $$->line = @1.first_line; }
+    ;
+
+/* Extern block for FFI declarations */
+extern_block:
+    EXTERN LBRACE extern_decl_list RBRACE { $$ = make_extern_block($3); $$->line = @1.first_line; }
+    ;
+
+extern_decl_list:
+    extern_decl                     { $$ = make_list($1); }
+    | extern_decl_list extern_decl  { $$ = list_append($1, $2); }
+    ;
+
+extern_decl:
+    LET IDENTIFIER COLON type_spec
+        { $$ = make_extern_let($2, $4); $$->line = @1.first_line; }
+    | VAR IDENTIFIER COLON type_spec
+        { $$ = make_extern_var($2, $4); $$->line = @1.first_line; }
+    | FUNC IDENTIFIER LPAREN param_list RPAREN
+        { $$ = make_extern_func($2, $4, NULL); $$->line = @1.first_line; }
+    | FUNC IDENTIFIER LPAREN param_list RPAREN ARROW type_spec
+        { $$ = make_extern_func($2, $4, $7); $$->line = @1.first_line; }
     ;
 
 param_list:

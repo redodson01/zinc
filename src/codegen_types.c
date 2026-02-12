@@ -153,6 +153,98 @@ void gen_object_typedefs(CodegenContext *ctx) {
     }
 }
 
+/* Generate individual extern declaration to header */
+void gen_extern_decl(CodegenContext *ctx, ASTNode *decl) {
+    switch (decl->type) {
+    case NODE_EXTERN_FUNC: {
+        /* Return type */
+        TypeInfo *ret_ti = decl->data.extern_func.return_type;
+        fprintf(ctx->h_file, "extern ");
+        if (!ret_ti) {
+            fprintf(ctx->h_file, "void");
+        } else if (ret_ti->kind == TK_STRING) {
+            fprintf(ctx->h_file, "const char*");
+        } else if (ret_ti->kind == TK_STRUCT && ret_ti->name) {
+            StructDef *sd = lookup_struct(ctx->sem_ctx, ret_ti->name);
+            if (sd && sd->is_class) {
+                fprintf(ctx->h_file, "%s *", ret_ti->name);
+            } else {
+                fprintf(ctx->h_file, "%s", ret_ti->name);
+            }
+        } else {
+            fprintf(ctx->h_file, "%s", type_to_c(ret_ti->kind));
+        }
+        fprintf(ctx->h_file, " %s(", decl->data.extern_func.name);
+
+        /* Parameters */
+        int first = 1;
+        for (NodeList *p = decl->data.extern_func.params; p; p = p->next) {
+            if (!first) fprintf(ctx->h_file, ", ");
+            TypeInfo *ti = p->node->data.param.type_info;
+            if (ti->kind == TK_STRING) {
+                fprintf(ctx->h_file, "const char* %s", p->node->data.param.name);
+            } else if (ti->kind == TK_STRUCT && ti->name) {
+                StructDef *sd = lookup_struct(ctx->sem_ctx, ti->name);
+                if (sd && sd->is_class) {
+                    fprintf(ctx->h_file, "%s *%s", ti->name, p->node->data.param.name);
+                } else {
+                    fprintf(ctx->h_file, "%s %s", ti->name, p->node->data.param.name);
+                }
+            } else {
+                fprintf(ctx->h_file, "%s %s", type_to_c(ti->kind), p->node->data.param.name);
+            }
+            first = 0;
+        }
+        if (first) {
+            fprintf(ctx->h_file, "void");
+        }
+        fprintf(ctx->h_file, ");\n");
+        break;
+    }
+    case NODE_EXTERN_VAR: {
+        TypeInfo *ti = decl->data.extern_var.type_info;
+        if (ti->kind == TK_STRING) {
+            fprintf(ctx->h_file, "extern const char* %s;\n", decl->data.extern_var.name);
+        } else if (ti->kind == TK_STRUCT && ti->name) {
+            StructDef *sd = lookup_struct(ctx->sem_ctx, ti->name);
+            if (sd && sd->is_class) {
+                fprintf(ctx->h_file, "extern %s *%s;\n", ti->name, decl->data.extern_var.name);
+            } else {
+                fprintf(ctx->h_file, "extern %s %s;\n", ti->name, decl->data.extern_var.name);
+            }
+        } else {
+            fprintf(ctx->h_file, "extern %s %s;\n", type_to_c(ti->kind), decl->data.extern_var.name);
+        }
+        break;
+    }
+    case NODE_EXTERN_LET: {
+        TypeInfo *ti = decl->data.extern_let.type_info;
+        if (ti->kind == TK_STRING) {
+            fprintf(ctx->h_file, "extern const char* const %s;\n", decl->data.extern_let.name);
+        } else if (ti->kind == TK_STRUCT && ti->name) {
+            StructDef *sd = lookup_struct(ctx->sem_ctx, ti->name);
+            if (sd && sd->is_class) {
+                fprintf(ctx->h_file, "extern %s *const %s;\n", ti->name, decl->data.extern_let.name);
+            } else {
+                fprintf(ctx->h_file, "extern const %s %s;\n", ti->name, decl->data.extern_let.name);
+            }
+        } else {
+            fprintf(ctx->h_file, "extern const %s %s;\n", type_to_c(ti->kind), decl->data.extern_let.name);
+        }
+        break;
+    }
+    default:
+        break;
+    }
+}
+
+/* Generate extern block — iterates declarations and emits each */
+void gen_extern_block(CodegenContext *ctx, ASTNode *block) {
+    for (NodeList *d = block->data.extern_block.decls; d; d = d->next) {
+        gen_extern_decl(ctx, d->node);
+    }
+}
+
 /* Generate collection helper functions for all struct-like types */
 void gen_collection_helpers(CodegenContext *ctx) {
     /* Pass 1: Forward declarations for all helpers */

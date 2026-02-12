@@ -104,6 +104,8 @@ void gen_struct_def(CodegenContext *ctx, ASTNode *node);
 void gen_class_def(CodegenContext *ctx, ASTNode *node);
 void gen_tuple_typedefs(CodegenContext *ctx);
 void gen_object_typedefs(CodegenContext *ctx);
+void gen_extern_decl(CodegenContext *ctx, ASTNode *decl);
+void gen_extern_block(CodegenContext *ctx, ASTNode *block);
 void gen_collection_helpers(CodegenContext *ctx);
 
 #endif

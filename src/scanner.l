@@ -67,6 +67,7 @@ static char *str_buf_finish(ScannerExtra *extra) {
 "continue"      { return CONTINUE; }
 "func"          { return FUNC; }
 "return"        { return RETURN; }
+"extern"        { return EXTERN; }
 "struct"        { return STRUCT; }
 "class"         { return CLASS; }
 "true"          { yylval->bval = 1; return BOOL_LIT; }
@@ -108,6 +109,7 @@ static char *str_buf_finish(ScannerExtra *extra) {
     return IDENTIFIER;
 }
 
+"->"            { return ARROW; }
 "+="            { return PLUS_ASSIGN; }
 "-="            { return MINUS_ASSIGN; }
 "*="            { return STAR_ASSIGN; }

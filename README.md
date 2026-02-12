@@ -610,17 +610,19 @@ var flags = [true, false]     # bool[]
 var empty = int[]             # empty int array
 ```
 
-**Generic arrays** support any element type — structs, classes, tuples, objects, nested arrays, and hashes:
+Arrays can hold any type, including structs, classes, tuples, objects, and nested arrays:
 
 ```
 struct Point { var x: int; var y: int }
 class Node { var value: int }
 
-var points = [Point(x: 1, y: 2), Point(x: 3, y: 4)]   # struct[]
-var nodes = [Node(value: 10), Node(value: 20)]           # class[]
-var nested = [[1, 2], [3, 4]]                            # int[][]
-var empty_pts = Point[]                                   # empty Point array
+var points = [Point(x: 1, y: 2), Point(x: 3, y: 4)]
+var nodes = [Node(value: 10), Node(value: 20)]
+var nested = [[1, 2], [3, 4]]
+var empty_pts = Point[]       # typed empty array of structs
 ```
+
+Struct elements are copied into the array by value. Class elements are reference-counted — the array retains each element.
 
 **Array type annotations** can be used in function parameters:
 
@@ -680,15 +682,15 @@ var bool_ht = [true: 1, false: 0] # bool keys
 var empty = [String: int]          # empty hash
 ```
 
-**Generic hash values** support any type — structs, classes, and other compound types:
+Hash values can be any type, including structs, classes, and other collections:
 
 ```
-class Node { var value: int }
-
-var map = ["a": Node(value: 100)]            # String -> Node
-var pts = [1: Point(x: 5, y: 6)]            # int -> Point
-var empty_map = [String: Node]               # empty hash with Node values
+var map = ["a": Node(value: 1), "b": Node(value: 2)]
+var pts = [1: Point(x: 5, y: 6), 2: Point(x: 7, y: 8)]
+var empty_map = [String: Node]    # typed empty hash with class values
 ```
+
+Class-typed values are reference-counted. Struct-typed values are copied by value.
 
 **Hash type annotations** can be used in function parameters:
 
@@ -709,6 +711,22 @@ var ht = make_hash()
 ```
 
 **Memory management** is automatic via reference counting, just like arrays.
+
+### FFI (Foreign Function Interface)
+
+Extern blocks declare foreign C functions and variables:
+
+```
+extern {
+    func puts(s: String)
+    func exit(code: int)
+    func rand() -> int
+    var errno: int
+    let STDIN_FILENO: int
+}
+```
+
+Functions without a `-> type` annotation are void. The `let` keyword declares read-only extern variables, `var` declares mutable ones.
 
 ### Built-in Functions
 

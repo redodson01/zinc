@@ -1,0 +1,42 @@
+# Test: Extern declarations for FFI
+
+struct Point {
+    var x: int
+    var y: int
+}
+
+class Widget {
+    var id: int
+}
+
+extern {
+    # Void function (no params, no return type)
+    func abort()
+
+    # Function with parameters and return type
+    func zn_test_parse(s: String, base: int) -> int
+
+    # Named struct parameter and return type
+    func zn_test_transform(p: Point) -> Point
+
+    # Named class parameter and return type
+    func zn_test_get_widget(w: Widget, id: int) -> Widget
+
+    # Extern variable declarations
+    var zn_test_counter: int
+    let ZN_TEST_CONST: int
+
+    # Named type variables
+    var zn_test_origin: Point
+    let zn_test_default_widget: Widget
+}
+
+func helper(x: int) {
+    x * 2
+}
+
+func main() {
+    var result = helper(21)
+    # Don't actually call extern symbols - just test that declarations compile
+    0
+}
