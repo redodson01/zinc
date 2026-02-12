@@ -5,7 +5,7 @@
 #include "semantic.h"
 
 static int is_ref_type(TypeKind t) {
-    return t == TK_STRING || t == TK_CLASS;
+    return t == TK_STRING || t == TK_CLASS || t == TK_ARRAY;
 }
 
 /* Variadic error reporting with line numbers */
@@ -168,6 +168,7 @@ static const char *type_kind_suffix(TypeKind t) {
     case TK_STRING: return "str";
     case TK_BOOL:   return "bool";
     case TK_CHAR:   return "char";
+    case TK_ARRAY:  return "arr";
     default:        return "unk";
     }
 }
@@ -196,13 +197,14 @@ static const char *type_kind_name(TypeKind t) {
     case TK_VOID:   return "void";
     case TK_STRUCT: return "struct";
     case TK_CLASS:  return "class";
+    case TK_ARRAY:  return "array";
     default:        return "unknown";
     }
 }
 
 /* Type inference — sets resolved_type on nodes */
 Type *get_expr_type(SemanticContext *ctx, ASTNode *expr) {
-    static Type void_type = {TK_VOID, 0, NULL};
+    static Type void_type = {TK_VOID, 0, NULL, NULL};
     if (!expr) return &void_type;
 
     /* Return cached type if already resolved */
@@ -287,7 +289,7 @@ Type *get_expr_type(SemanticContext *ctx, ASTNode *expr) {
             type_free(expr->resolved_type);
             expr->resolved_type = type_clone(sym->type);
             TypeKind rk = sym->type->kind;
-            if (rk == TK_STRING || rk == TK_CLASS)
+            if (rk == TK_STRING || rk == TK_CLASS || rk == TK_ARRAY)
                 expr->is_fresh_alloc = 1;
             return expr->resolved_type;
         }
@@ -309,6 +311,10 @@ Type *get_expr_type(SemanticContext *ctx, ASTNode *expr) {
     case NODE_INDEX:
         /* resolved_type already set during analyze_expr */
         result = expr->resolved_type ? expr->resolved_type->kind : TK_UNKNOWN;
+        break;
+    case NODE_ARRAY_LITERAL:
+    case NODE_TYPED_EMPTY_ARRAY:
+        result = TK_ARRAY;
         break;
     case NODE_OPTIONAL_CHECK:
         result = TK_BOOL;
@@ -590,7 +596,7 @@ static void analyze_expr(SemanticContext *ctx, ASTNode *expr) {
                 }
             }
 
-            /* Check that all required fields (without defaults) are provided. */
+            /* Check that all required fields (without defaults) are provided */
             for (StructFieldDef *fd = sd->fields; fd; fd = fd->next) {
                 if (!fd->has_default) {
                     int found = 0;
@@ -692,6 +698,13 @@ static void analyze_expr(SemanticContext *ctx, ASTNode *expr) {
             break;
         }
 
+        /* Array .length */
+        if (obj_kind == TK_ARRAY && strcmp(field, "length") == 0) {
+            if (!expr->resolved_type) expr->resolved_type = type_new(TK_INT);
+            else expr->resolved_type->kind = TK_INT;
+            break;
+        }
+
         /* Struct/class field access */
         const char *obj_struct_name = (obj->resolved_type) ? obj->resolved_type->name : NULL;
         if ((obj_kind != TK_STRUCT && obj_kind != TK_CLASS) || !obj_struct_name) {
@@ -732,14 +745,23 @@ static void analyze_expr(SemanticContext *ctx, ASTNode *expr) {
         analyze_expr(ctx, expr->data.index_access.index);
         TypeKind obj_type = get_expr_type(ctx, expr->data.index_access.object)->kind;
         TypeKind idx_type = get_expr_type(ctx, expr->data.index_access.index)->kind;
-        if (obj_type == TK_STRING) {
+        if (obj_type == TK_ARRAY) {
+            Type *obj_t = expr->data.index_access.object->resolved_type;
+            type_free(expr->resolved_type);
+            expr->resolved_type = (obj_t && obj_t->elem)
+                ? type_clone(obj_t->elem)
+                : type_new(TK_UNKNOWN);
+            if (idx_type != TK_INT) {
+                semantic_errorf(ctx, expr->line, "array index must be an int");
+            }
+        } else if (obj_type == TK_STRING) {
             if (!expr->resolved_type) expr->resolved_type = type_new(TK_CHAR);
             else expr->resolved_type->kind = TK_CHAR;
             if (idx_type != TK_INT && idx_type != TK_UNKNOWN) {
                 semantic_errorf(ctx, expr->line, "string index must be an integer");
             }
         } else if (obj_type != TK_UNKNOWN) {
-            semantic_errorf(ctx, expr->line, "index operator requires a string");
+            semantic_errorf(ctx, expr->line, "index operator requires an array or string");
         }
         break;
     }
@@ -774,6 +796,8 @@ static void analyze_expr(SemanticContext *ctx, ASTNode *expr) {
                 const char *suffix;
                 if ((et == TK_STRUCT || et == TK_CLASS) && rt && rt->name)
                     suffix = rt->name;
+                else if (et == TK_ARRAY)
+                    suffix = "arr";
                 else
                     suffix = type_kind_suffix(et);
                 pos += snprintf(canonical + pos, sizeof(canonical) - pos, "_%s_%s",
@@ -784,6 +808,8 @@ static void analyze_expr(SemanticContext *ctx, ASTNode *expr) {
                 const char *suffix;
                 if ((et == TK_STRUCT || et == TK_CLASS) && rt && rt->name)
                     suffix = rt->name;
+                else if (et == TK_ARRAY)
+                    suffix = "arr";
                 else
                     suffix = type_kind_suffix(et);
                 pos += snprintf(canonical + pos, sizeof(canonical) - pos, "_%s", suffix);
@@ -810,6 +836,8 @@ static void analyze_expr(SemanticContext *ctx, ASTNode *expr) {
                     Type *rt = e->node->data.named_arg.value->resolved_type;
                     if ((tk == TK_STRUCT || tk == TK_CLASS) && rt && rt->name)
                         fd->type->name = strdup(rt->name);
+                    if (tk == TK_ARRAY && rt && rt->elem)
+                        fd->type->elem = type_clone(rt->elem);
                 } else {
                     char fname[32];
                     snprintf(fname, sizeof(fname), "_%d", idx);
@@ -819,6 +847,8 @@ static void analyze_expr(SemanticContext *ctx, ASTNode *expr) {
                     Type *rt = e->node->resolved_type;
                     if ((tk == TK_STRUCT || tk == TK_CLASS) && rt && rt->name)
                         fd->type->name = strdup(rt->name);
+                    if (tk == TK_ARRAY && rt && rt->elem)
+                        fd->type->elem = type_clone(rt->elem);
                 }
                 fd->is_const = 0;  /* Tuple fields are implicitly var */
                 if (fields_tail) { fields_tail->next = fd; } else { fields_head = fd; }
@@ -854,6 +884,8 @@ static void analyze_expr(SemanticContext *ctx, ASTNode *expr) {
             if ((tk == TK_STRUCT || tk == TK_CLASS) && na->data.named_arg.value->resolved_type
                 && na->data.named_arg.value->resolved_type->name) {
                 suffix = na->data.named_arg.value->resolved_type->name;
+            } else if (tk == TK_ARRAY) {
+                suffix = "arr";
             } else {
                 suffix = type_kind_suffix(tk);
             }
@@ -884,6 +916,8 @@ static void analyze_expr(SemanticContext *ctx, ASTNode *expr) {
                 Type *rt = na->data.named_arg.value->resolved_type;
                 if ((tk == TK_STRUCT || tk == TK_CLASS) && rt && rt->name)
                     fd->type->name = strdup(rt->name);
+                if (tk == TK_ARRAY && rt && rt->elem)
+                    fd->type->elem = type_clone(rt->elem);
                 if (fields_tail) fields_tail->next = fd;
                 else fields_head = fd;
                 fields_tail = fd;
@@ -898,6 +932,46 @@ static void analyze_expr(SemanticContext *ctx, ASTNode *expr) {
         expr->resolved_type->name = strdup(type_name);
         expr->is_fresh_alloc = 1;
         free(type_name);
+        break;
+    }
+    case NODE_ARRAY_LITERAL: {
+        Type *elem_type = NULL;
+        for (NodeList *e = expr->data.array_literal.elems; e; e = e->next) {
+            analyze_expr(ctx, e->node);
+            get_expr_type(ctx, e->node);
+            if (!elem_type) {
+                elem_type = type_clone(e->node->resolved_type);
+            } else if (elem_type->kind != TK_UNKNOWN &&
+                       e->node->resolved_type->kind != TK_UNKNOWN &&
+                       !type_eq(elem_type, e->node->resolved_type)) {
+                semantic_errorf(ctx, expr->line, "array elements must all have the same type");
+            }
+        }
+        if (!expr->resolved_type) expr->resolved_type = type_new(TK_ARRAY);
+        else expr->resolved_type->kind = TK_ARRAY;
+        type_free(expr->resolved_type->elem);
+        expr->resolved_type->elem = elem_type ? elem_type : type_new(TK_UNKNOWN);
+        expr->is_fresh_alloc = 1;
+        break;
+    }
+    case NODE_TYPED_EMPTY_ARRAY: {
+        if (!expr->resolved_type) expr->resolved_type = type_new(TK_ARRAY);
+        else expr->resolved_type->kind = TK_ARRAY;
+        type_free(expr->resolved_type->elem);
+        if (expr->data.typed_empty_array.elem_name) {
+            /* Named type: look up to determine struct/class/tuple/object */
+            const char *ename = expr->data.typed_empty_array.elem_name;
+            StructDef *sd = lookup_struct(ctx, ename);
+            if (!sd) {
+                semantic_errorf(ctx, expr->line, "undefined type '%s'", ename);
+            }
+            TypeKind ek = (sd && sd->is_class) ? TK_CLASS : TK_STRUCT;
+            expr->resolved_type->elem = type_new(ek);
+            expr->resolved_type->elem->name = strdup(ename);
+        } else {
+            expr->resolved_type->elem = type_new(expr->data.typed_empty_array.elem_type);
+        }
+        expr->is_fresh_alloc = 1;
         break;
     }
     case NODE_OPTIONAL_CHECK: {

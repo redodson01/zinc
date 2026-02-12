@@ -1,0 +1,11 @@
+func main() {
+    var i = 0
+    var arr = while i < 100000 {
+        i = i + 1
+        if i < 100000 {
+            continue [i, i + 1]
+        }
+        break [0]
+    }
+    0
+}

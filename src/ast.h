@@ -26,6 +26,7 @@ typedef enum {
     TK_VOID,
     TK_STRUCT,
     TK_CLASS,
+    TK_ARRAY,
 } TypeKind;
 
 /* Resolved type representation — used by semantic analysis and codegen.
@@ -35,6 +36,7 @@ typedef struct Type {
     TypeKind kind;
     int is_optional;
     char *name;           /* struct/class/tuple/object canonical name */
+    struct Type *elem;    /* array element type */
 } Type;
 
 /* Type helpers */
@@ -58,6 +60,7 @@ typedef struct TypeInfo {
     TypeInfoField *fields;  /* For object types { name: type, ... } */
     int is_object;          /* 1 for object types, 0 otherwise */
     int is_tuple;           /* 1 for tuple type annotations */
+    struct TypeInfo *elem;  /* array element type */
 } TypeInfo;
 
 Type *type_from_info(TypeInfo *ti);
@@ -96,6 +99,8 @@ typedef enum {
     NODE_NAMED_ARG,
     NODE_TUPLE,
     NODE_OBJECT_LITERAL,
+    NODE_ARRAY_LITERAL,
+    NODE_TYPED_EMPTY_ARRAY,
 } NodeType;
 
 typedef struct ASTNode ASTNode;
@@ -146,6 +151,8 @@ struct ASTNode {
         struct { char *name; ASTNode *value; } named_arg;
         struct { NodeList *elements; } tuple;
         struct { NodeList *fields; } object_literal;
+        struct { NodeList *elems; } array_literal;
+        struct { TypeKind elem_type; char *elem_name; } typed_empty_array;
     } data;
 };
 
@@ -179,7 +186,10 @@ ASTNode *make_call(char *name, NodeList *args);
 ASTNode *make_return(ASTNode *value);
 ASTNode *make_field_access(ASTNode *object, char *field);
 ASTNode *make_index_access(ASTNode *object, ASTNode *index);
+ASTNode *make_array_literal(NodeList *elems);
 ASTNode *make_optional_check(ASTNode *operand);
+ASTNode *make_typed_empty_array(TypeKind elem_type);
+ASTNode *make_typed_empty_array_named(char *type_name);
 ASTNode *make_type_def(char *name, NodeList *fields, int is_class);
 ASTNode *make_struct_field(char *name, TypeInfo *type_info, ASTNode *default_value, int is_const);
 ASTNode *make_named_arg(char *name, ASTNode *value);

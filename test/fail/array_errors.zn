@@ -1,0 +1,12 @@
+# ERRORS: 3
+
+func main() {
+    # Mixed element types (2 errors: "hello" and true don't match int)
+    var arr = [1, "hello", true]
+
+    # Index assignment on non-array
+    var x = 42
+    x[0] = 10
+
+    0
+}

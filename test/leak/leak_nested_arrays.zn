@@ -1,0 +1,8 @@
+func main() {
+    var i = 0
+    while i < 100000 {
+        var nested = [[1, 2, 3], [4, 5, 6]]
+        i = i + 1
+    }
+    0
+}

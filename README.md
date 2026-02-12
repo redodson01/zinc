@@ -401,6 +401,17 @@ var r = Rect(origin: Point(x: 0, y: 0), size: Point(x: 100, y: 50))
 r.origin.x = 10
 ```
 
+**Compound type fields** — struct fields can be arrays, hashes, or any other type. Reference-counted fields are automatically retained and released:
+
+```
+struct Holder {
+    var values: int[]
+    var settings: [String: int]
+}
+
+var h = Holder(values: [1, 2, 3], settings: ["width": 800])
+```
+
 **Structs as function parameters and return values:**
 
 ```
@@ -549,6 +560,75 @@ let result = sum({ x: 3, y: 4 })   # 7
 ```
 
 Objects with the same field names and types share a single anonymous type. Memory management is automatic, just like classes.
+
+### Arrays
+
+Arrays are dynamic, reference-counted collections of values. All elements must have the same type.
+
+```
+var nums = [1, 2, 3, 4, 5]
+var empty = int[]
+```
+
+**Element access** uses bracket notation with zero-based indexing:
+
+```
+let first = nums[0]     # 1
+let third = nums[2]     # 3
+```
+
+**Length** is available as a property:
+
+```
+let len = nums.length    # 5
+```
+
+**Index assignment** modifies elements in place:
+
+```
+nums[0] = 99
+```
+
+**Element types** are inferred from the first element. All elements must match. Empty arrays require an explicit element type:
+
+```
+var ints = [1, 2, 3]          # int[]
+var strs = ["hello", "world"] # String[]
+var flags = [true, false]     # bool[]
+var empty = int[]             # empty int array
+```
+
+**Generic arrays** support any element type — structs, classes, tuples, objects, and nested arrays:
+
+```
+struct Point { var x: int; var y: int }
+class Node { var value: int }
+
+var points = [Point(x: 1, y: 2), Point(x: 3, y: 4)]   # struct[]
+var nodes = [Node(value: 10), Node(value: 20)]           # class[]
+var nested = [[1, 2], [3, 4]]                            # int[][]
+var empty_pts = Point[]                                   # empty Point array
+```
+
+**Array type annotations** can be used in function parameters:
+
+```
+func first(nums: int[]) {
+    nums[0]
+}
+```
+
+**Functions** can return arrays:
+
+```
+func make_array() {
+    [10, 20, 30]
+}
+
+var arr = make_array()
+```
+
+**Memory management** is automatic via reference counting. Arrays are freed when their last reference goes away. Bounds checking is performed at runtime — out-of-bounds access terminates the program with an error message.
 
 ### Built-in Functions
 

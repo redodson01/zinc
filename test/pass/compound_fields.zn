@@ -1,0 +1,89 @@
+# Test: Compound types as fields of other compound types
+# Exercises ARC correctness for nested ref-counted types
+
+# --- Class with array field ---
+class Container {
+    var items: int[]
+    var label: String
+}
+
+# --- Class with class field (reassignment) ---
+class Inner {
+    var value: int
+}
+
+class Outer {
+    var child: Inner
+}
+
+# --- Struct with array field ---
+struct Holder {
+    var values: int[]
+}
+
+# --- Struct with String field (scope cleanup) ---
+struct Named {
+    var name: String
+    var id: int
+}
+
+# --- Function with tuple type annotation ---
+func sum_pair(p: (int, int)) {
+    p.0 + p.1
+}
+
+# --- Function with named tuple type annotation ---
+func distance(p: (x: int, y: int)) {
+    p.x + p.y
+}
+
+# --- Function with array type annotation ---
+func first(arr: int[]) {
+    arr[0]
+}
+
+func main() {
+    # Class with array field: creation and access
+    var c = Container(items: [1, 2, 3], label: "test")
+    let i = c.items[0]
+    let l = c.label
+
+    # Class with array field: reassignment (tests retain/release)
+    c.items = [4, 5, 6]
+    let i2 = c.items[0]
+
+    # Class with class field: reassignment
+    var outer = Outer(child: Inner(value: 10))
+    let ov = outer.child.value
+    outer.child = Inner(value: 20)
+    let ov2 = outer.child.value
+
+    # Object with array field
+    var obj_a = { items: [10, 20, 30] }
+    let oa = obj_a.items[1]
+
+    # Struct with array field (tests value-type ARC retain on creation + scope cleanup)
+    var h = Holder(values: [7, 8, 9])
+    let hv = h.values[0]
+
+    # Struct with String field (tests value-type scope cleanup)
+    var named = Named(name: "hello", id: 1)
+    let nm = named.name
+
+    # Tuple with String element (tests retain on creation + scope cleanup)
+    var ts = ("hello", 42)
+    let tsv = ts.0
+
+    # Tuple with array element
+    var ta = ([1, 2, 3], true)
+    let tav = ta.0[0]
+
+    # Function with tuple type annotations
+    let sp = sum_pair((3, 4))
+    let dp = distance((x: 5, y: 10))
+
+    # Function with array type annotation
+    let fv = first([10, 20, 30])
+
+    0
+}

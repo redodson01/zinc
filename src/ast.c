@@ -47,12 +47,14 @@ Type *type_clone(const Type *t) {
     c->kind = t->kind;
     c->is_optional = t->is_optional;
     c->name = t->name ? strdup(t->name) : NULL;
+    c->elem = type_clone(t->elem);
     return c;
 }
 
 void type_free(Type *t) {
     if (!t) return;
     free(t->name);
+    type_free(t->elem);
     free(t);
 }
 
@@ -65,6 +67,7 @@ int type_eq(const Type *a, const Type *b) {
         if (!a->name || !b->name) return a->name == b->name;
         return strcmp(a->name, b->name) == 0;
     }
+    if (!type_eq(a->elem, b->elem)) return 0;
     return 1;
 }
 
@@ -260,9 +263,29 @@ ASTNode *make_index_access(ASTNode *object, ASTNode *index) {
     return n;
 }
 
+ASTNode *make_array_literal(NodeList *elems) {
+    ASTNode *n = alloc_node(NODE_ARRAY_LITERAL);
+    n->data.array_literal.elems = elems;
+    return n;
+}
+
 ASTNode *make_optional_check(ASTNode *operand) {
     ASTNode *n = alloc_node(NODE_OPTIONAL_CHECK);
     n->data.optional_check.operand = operand;
+    return n;
+}
+
+ASTNode *make_typed_empty_array(TypeKind elem_type) {
+    ASTNode *n = alloc_node(NODE_TYPED_EMPTY_ARRAY);
+    n->data.typed_empty_array.elem_type = elem_type;
+    n->data.typed_empty_array.elem_name = NULL;
+    return n;
+}
+
+ASTNode *make_typed_empty_array_named(char *type_name) {
+    ASTNode *n = alloc_node(NODE_TYPED_EMPTY_ARRAY);
+    n->data.typed_empty_array.elem_type = TK_STRUCT;
+    n->data.typed_empty_array.elem_name = type_name;
     return n;
 }
 
@@ -346,12 +369,14 @@ Type *type_from_info(TypeInfo *ti) {
     t->is_optional = ti->is_optional;
     if (ti->name)
         t->name = strdup(ti->name);
+    if (ti->elem) t->elem = type_from_info(ti->elem);
     return t;
 }
 
 void free_type_info(TypeInfo *ti) {
     if (!ti) return;
     free(ti->name);
+    free_type_info(ti->elem);
     TypeInfoField *f = ti->fields;
     while (f) {
         TypeInfoField *next = f->next;
@@ -584,6 +609,14 @@ void print_ast(ASTNode *node, int indent) {
         for (NodeList *f = node->data.object_literal.fields; f; f = f->next)
             print_ast(f->node, indent + 1);
         break;
+    case NODE_ARRAY_LITERAL:
+        printf("ArrayLiteral\n");
+        for (NodeList *e = node->data.array_literal.elems; e; e = e->next)
+            print_ast(e->node, indent + 1);
+        break;
+    case NODE_TYPED_EMPTY_ARRAY:
+        printf("TypedEmptyArray: elem=%d\n", node->data.typed_empty_array.elem_type);
+        break;
     }
 }
 
@@ -687,6 +720,12 @@ void free_ast(ASTNode *node) {
         break;
     case NODE_OBJECT_LITERAL:
         free_list(node->data.object_literal.fields);
+        break;
+    case NODE_ARRAY_LITERAL:
+        free_list(node->data.array_literal.elems);
+        break;
+    case NODE_TYPED_EMPTY_ARRAY:
+        free(node->data.typed_empty_array.elem_name);
         break;
     }
     type_free(node->resolved_type);

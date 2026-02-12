@@ -17,7 +17,7 @@
 %define api.pure full
 %locations
 %define parse.error verbose
-%expect 7  /* Shift/reduce conflicts: dangling else (3) + expression ambiguities (4) */
+%expect 9  /* Shift/reduce conflicts: dangling else (3) + expression ambiguities (4) + array (2) */
 
 %param { yyscan_t scanner }
 %parse-param { ASTNode **result }
@@ -34,6 +34,7 @@
     int bval;
     char cval;
     char *sval;
+    int tkind;
     ASTNode *node;
     NodeList *list;
     TypeInfo *type;
@@ -64,11 +65,12 @@
 %type <node> struct_def class_def struct_field arg_or_named
 %type <node> interp_parts
 %type <list> top_level_list expr_list param_list arg_list struct_field_list
-%type <list> tuple_rest named_tuple_rest object_field_list
+%type <list> tuple_rest named_tuple_rest object_field_list array_elems
 
 %type <type> type_spec
 %type <type_field> object_type_fields object_type_field
 %type <type_field> tuple_type_elems tuple_type_elem
+%type <tkind> type_kw
 
 %right BREAK CONTINUE RETURN
 %right ASSIGN PLUS_ASSIGN MINUS_ASSIGN STAR_ASSIGN SLASH_ASSIGN PERCENT_ASSIGN
@@ -120,6 +122,7 @@ type_spec:
     | TYPE_CHAR                         { $$ = make_type_info(TK_CHAR); }
     | IDENTIFIER                        { $$ = make_struct_type_info($1); }
     | LBRACE object_type_fields RBRACE  { $$ = make_object_type_info($2); }
+    | type_spec LBRACKET RBRACKET       { TypeInfo *a = calloc(1, sizeof(TypeInfo)); a->kind = TK_ARRAY; a->elem = $1; $$ = a; }
     | type_spec QUESTION                { $$ = make_optional_type($1); }
     | LPAREN tuple_type_elems RPAREN   { $$ = make_tuple_type_info($2); }
     ;
@@ -146,6 +149,14 @@ object_type_fields:
 object_type_field:
     IDENTIFIER COLON type_spec  { $$ = make_type_info_field($1, $3); }
 
+type_kw:
+    TYPE_INT                            { $$ = TK_INT; }
+    | TYPE_FLOAT                        { $$ = TK_FLOAT; }
+    | TYPE_STRING                       { $$ = TK_STRING; }
+    | TYPE_BOOL                         { $$ = TK_BOOL; }
+    | TYPE_CHAR                         { $$ = TK_CHAR; }
+    ;
+
 block:
     LBRACE expr_list RBRACE             { $$ = make_block($2); }
     ;
@@ -162,16 +173,16 @@ expr:
     | LET IDENTIFIER ASSIGN expr        { $$ = make_decl($2, $4, 1); $$->line = @1.first_line; }
     /* Assignments */
     | expr ASSIGN expr                  { $$ = make_assign($1, $3); $$->line = @1.first_line; }
-    | expr PLUS_ASSIGN expr  { $$ = make_compound_assign($1, OP_ADD_ASSIGN, $3); $$->line = @1.first_line; }
-    | expr MINUS_ASSIGN expr { $$ = make_compound_assign($1, OP_SUB_ASSIGN, $3); $$->line = @1.first_line; }
-    | expr STAR_ASSIGN expr  { $$ = make_compound_assign($1, OP_MUL_ASSIGN, $3); $$->line = @1.first_line; }
-    | expr SLASH_ASSIGN expr { $$ = make_compound_assign($1, OP_DIV_ASSIGN, $3); $$->line = @1.first_line; }
-    | expr PERCENT_ASSIGN expr { $$ = make_compound_assign($1, OP_MOD_ASSIGN, $3); $$->line = @1.first_line; }
+    | expr PLUS_ASSIGN expr             { $$ = make_compound_assign($1, OP_ADD_ASSIGN, $3); $$->line = @1.first_line; }
+    | expr MINUS_ASSIGN expr            { $$ = make_compound_assign($1, OP_SUB_ASSIGN, $3); $$->line = @1.first_line; }
+    | expr STAR_ASSIGN expr             { $$ = make_compound_assign($1, OP_MUL_ASSIGN, $3); $$->line = @1.first_line; }
+    | expr SLASH_ASSIGN expr            { $$ = make_compound_assign($1, OP_DIV_ASSIGN, $3); $$->line = @1.first_line; }
+    | expr PERCENT_ASSIGN expr          { $$ = make_compound_assign($1, OP_MOD_ASSIGN, $3); $$->line = @1.first_line; }
     /* Increment/decrement (restricted to l-values via primary) */
     | INCREMENT primary %prec PREFIX_INCDEC  { $$ = make_incdec($2, OP_INC, 1); $$->line = @1.first_line; }
     | DECREMENT primary %prec PREFIX_INCDEC  { $$ = make_incdec($2, OP_DEC, 1); $$->line = @1.first_line; }
-    | primary INCREMENT                 { $$ = make_incdec($1, OP_INC, 0); $$->line = @1.first_line; }
-    | primary DECREMENT                 { $$ = make_incdec($1, OP_DEC, 0); $$->line = @1.first_line; }
+    | primary INCREMENT                    { $$ = make_incdec($1, OP_INC, 0); $$->line = @1.first_line; }
+    | primary DECREMENT                    { $$ = make_incdec($1, OP_DEC, 0); $$->line = @1.first_line; }
     /* Binary operators */
     | expr PLUS expr                    { $$ = make_binop($1, OP_ADD, $3); $$->line = @$.first_line; }
     | expr MINUS expr                   { $$ = make_binop($1, OP_SUB, $3); $$->line = @$.first_line; }
@@ -190,6 +201,11 @@ expr:
     | MINUS expr %prec UMINUS           { $$ = make_unaryop(OP_NEG, $2); $$->line = @1.first_line; }
     | PLUS expr %prec UPLUS             { $$ = make_unaryop(OP_POS, $2); $$->line = @1.first_line; }
     | NOT expr                          { $$ = make_unaryop(OP_NOT, $2); $$->line = @1.first_line; }
+    /* Typed empty array of user type: Point[] */
+    | expr LBRACKET RBRACKET            { if ($1->type == NODE_IDENT) {
+                                              $$ = make_typed_empty_array_named(strdup($1->data.ident.name));
+                                              free_ast($1); $$->line = @1.first_line;
+                                          } else { $$ = $1; } }
     /* Index access */
     | expr LBRACKET expr RBRACKET       { $$ = make_index_access($1, $3); $$->line = @$.first_line; }
     /* Field access */
@@ -338,7 +354,13 @@ primary:
     | CHAR_LIT                          { $$ = make_char($1); $$->line = @1.first_line; }
     | IDENTIFIER                        { $$ = make_ident($1); $$->line = @1.first_line; }
     | interp_string                     { $$ = $1; }
+    | type_kw LBRACKET RBRACKET         { $$ = make_typed_empty_array($1); $$->line = @1.first_line; }
+    | LBRACKET array_elems RBRACKET     { $$ = make_array_literal($2); $$->line = @1.first_line; }
     ;
+
+array_elems:
+    expr                                { $$ = make_list($1); }
+    | array_elems COMMA expr            { $$ = list_append($1, $3); }
 
 /* String interpolation: "hello ${name}!" desugars to ("hello " + name) + "!" */
 interp_string:

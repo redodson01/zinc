@@ -16,6 +16,8 @@ static void emit_nested_releases(CodegenContext *ctx, const char *prefix, Struct
             cg_emitf(ctx, "        __zn_str_release(%s%s);\n", prefix, fd->name);
         } else if (ft->kind == TK_CLASS && ft->name) {
             cg_emitf(ctx, "        __%s_release(%s%s);\n", ft->name, prefix, fd->name);
+        } else if (ft->kind == TK_ARRAY) {
+            cg_emitf(ctx, "        __zn_arr_release(%s%s);\n", prefix, fd->name);
         } else if (ft->kind == TK_STRUCT && ft->name) {
             StructDef *inner = lookup_struct(ctx->sem_ctx, ft->name);
             if (inner) {
@@ -146,5 +148,69 @@ void gen_object_typedefs(CodegenContext *ctx) {
             cg_emit(ctx, "    }\n");
             cg_emit(ctx, "}\n\n");
         }
+    }
+}
+
+/* Generate collection helper functions for all struct-like types */
+void gen_collection_helpers(CodegenContext *ctx) {
+    /* Pass 1: Forward declarations for all helpers */
+    for (int _bi = 0; _bi < STRUCT_BUCKETS; _bi++)
+    for (StructDef *sd = ctx->sem_ctx->struct_buckets[_bi]; sd; sd = sd->next) {
+        const char *name = sd->name;
+        bool is_class = sd->is_class;
+        bool is_value = !sd->is_class;
+
+        if (is_class) {
+            cg_emitf(ctx, "static void __zn_ret_%s(void *p);\n", name);
+            cg_emitf(ctx, "static void __zn_rel_%s(void *p);\n", name);
+        }
+        if (is_value) {
+            cg_emitf(ctx, "static void __zn_val_rel_%s(void *p);\n", name);
+        }
+    }
+    cg_emit(ctx, "\n");
+
+    /* Pass 2: Implementations */
+    for (int _bi = 0; _bi < STRUCT_BUCKETS; _bi++)
+    for (StructDef *sd = ctx->sem_ctx->struct_buckets[_bi]; sd; sd = sd->next) {
+        const char *name = sd->name;
+        bool is_class = sd->is_class;
+        bool is_value = !sd->is_class;
+        StructFieldDef *fields = sd->fields;
+
+        /* Retain/release wrappers for reference types */
+        if (is_class) {
+            cg_emitf(ctx, "static void __zn_ret_%s(void *p) { __%s_retain((%s*)p); }\n", name, name, name);
+            cg_emitf(ctx, "static void __zn_rel_%s(void *p) { __%s_release((%s*)p); }\n", name, name, name);
+        }
+
+        /* Value-type release (free heap copy + release ref-counted fields) */
+        if (is_value) {
+            cg_emitf(ctx, "static void __zn_val_rel_%s(void *p) {\n", name);
+            cg_emitf(ctx, "    %s *self = (%s*)p;\n", name, name);
+            for (StructFieldDef *fd = fields; fd; fd = fd->next) {
+                Type *ft = fd->type;
+                if (!ft) continue;
+                if (ft->kind == TK_STRING) {
+                    cg_emitf(ctx, "    __zn_str_release(self->%s);\n", fd->name);
+                } else if (ft->kind == TK_ARRAY) {
+                    cg_emitf(ctx, "    __zn_arr_release(self->%s);\n", fd->name);
+                } else if (ft->kind == TK_CLASS && ft->name) {
+                    cg_emitf(ctx, "    __%s_release(self->%s);\n", ft->name, fd->name);
+                } else if (ft->kind == TK_STRUCT && ft->name) {
+                    StructDef *inner = lookup_struct(ctx->sem_ctx, ft->name);
+                    if (inner) {
+                        char nested[256];
+                        snprintf(nested, sizeof(nested), "self->%s.", fd->name);
+                        /* Reuse emit_nested_releases for recursive struct fields */
+                        emit_nested_releases(ctx, nested, inner);
+                    }
+                }
+            }
+            cg_emit(ctx, "    free(self);\n");
+            cg_emit(ctx, "}\n");
+        }
+
+        cg_emit(ctx, "\n");
     }
 }

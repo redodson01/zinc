@@ -1,0 +1,9 @@
+# ERRORS: 1
+# Tests: undefined type in typed empty array
+
+func main() {
+    # Error 1: undefined type in empty array
+    var arr = Nonexistent[]
+
+    0
+}

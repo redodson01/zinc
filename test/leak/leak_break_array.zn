@@ -1,0 +1,10 @@
+func main() {
+    var i = 0
+    while i < 100000 {
+        var arr = while true {
+            break [i, i + 1]
+        }
+        i = i + 1
+    }
+    0
+}

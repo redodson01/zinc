@@ -78,10 +78,13 @@ void emit_retain_call(CodegenContext *ctx, const char *expr, Type *type);
 void emit_release_call(CodegenContext *ctx, const char *expr, Type *type);
 void emit_retain_open(CodegenContext *ctx, Type *type);
 void emit_release_open(CodegenContext *ctx, Type *type);
+void emit_box_call(CodegenContext *ctx, const char *expr, Type *type);
 CGScope *find_loop_scope(CodegenContext *ctx);
 
 /* --- Expression generation (codegen_expr.c) --- */
 
+const char *unbox_func_for(TypeKind t);
+void gen_box_expr(CodegenContext *ctx, ASTNode *expr);
 void gen_for_header(CodegenContext *ctx, ASTNode *node);
 void gen_string_comparison(CodegenContext *ctx, ASTNode *left, const char *op, ASTNode *right);
 void gen_coerce_to_string(CodegenContext *ctx, ASTNode *expr);
@@ -101,5 +104,6 @@ void gen_struct_def(CodegenContext *ctx, ASTNode *node);
 void gen_class_def(CodegenContext *ctx, ASTNode *node);
 void gen_tuple_typedefs(CodegenContext *ctx);
 void gen_object_typedefs(CodegenContext *ctx);
+void gen_collection_helpers(CodegenContext *ctx);
 
 #endif
