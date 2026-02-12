@@ -1,0 +1,8 @@
+# ERRORS: 1
+# Invalid expressions
+
+func main() {
+    var x = * 5
+    var valid = 42
+    return 0
+}

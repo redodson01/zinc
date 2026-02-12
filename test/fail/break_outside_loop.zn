@@ -1,0 +1,6 @@
+# ERRORS: 2
+func main() {
+  break 0
+  continue 0
+  0
+}

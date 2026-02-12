@@ -1,0 +1,5 @@
+# ERRORS: 1
+# Duplicate function declaration
+func foo() { 0 }
+func foo() { 1 }
+func main() { 0 }

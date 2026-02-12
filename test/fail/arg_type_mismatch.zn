@@ -1,0 +1,11 @@
+# ERRORS: 3
+func add(a: int, b: int) {
+  a + b
+}
+
+func main() {
+  add(true, 1)
+  add(1)
+  add(1, 2, 3)
+  0
+}

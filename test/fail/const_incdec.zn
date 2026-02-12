@@ -1,0 +1,8 @@
+# ERRORS: 2
+# Increment/decrement on a constant
+func main() {
+    let x = 5
+    x++
+    ++x
+    0
+}

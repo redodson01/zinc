@@ -1,0 +1,9 @@
+# ERRORS: 1
+# Missing brace
+
+func main() {
+    if true {
+        var x = 1
+
+    return 0
+}

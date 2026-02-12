@@ -1,0 +1,7 @@
+# ERRORS: 2
+# Calling a variable as a function
+func main() {
+    var x = 10
+    x(5)
+    0
+}

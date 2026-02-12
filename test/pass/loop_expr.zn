@@ -1,0 +1,38 @@
+# Test: loops as expressions (while true, until false)
+
+func main() {
+    # while true with break value
+    var x = while true { break 42 }
+    if x != 42 { return 1 }
+
+    # Conditional break in while true
+    var i = 0
+    var y = while true {
+        i = i + 1
+        if i == 5 {
+            break i * 10
+        }
+    }
+    if y != 50 { return 1 }
+
+    # Nested loops with break values
+    var outer = while true {
+        var inner = while true { break 7 }
+        break inner + 3
+    }
+    if outer != 10 { return 1 }
+
+    # Float break value
+    var f = while true { break 3.14 }
+    if f < 3.0 { return 1 }
+
+    # Bool break value
+    var b = while true { break true }
+    if !b { return 1 }
+
+    # until false with break value (desugared to while(!false) = while true)
+    var z = until false { break 99 }
+    if z != 99 { return 1 }
+
+    0
+}

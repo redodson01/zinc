@@ -1,0 +1,5 @@
+# ERRORS: 2
+func main() {
+  var x = unknown_var
+  0
+}

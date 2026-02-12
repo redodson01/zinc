@@ -1,0 +1,8 @@
+# ERRORS: 1
+# Malformed control structures
+
+func main() {
+    if x > 0
+        var y = 1
+    return 0
+}

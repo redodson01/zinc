@@ -1,0 +1,8 @@
+# ERRORS: 1
+# Invalid declarations
+
+func main() {
+    var 123 = 10
+    var valid = 30
+    return 0
+}

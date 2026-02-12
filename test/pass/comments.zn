@@ -1,0 +1,23 @@
+# Test: Comments
+# This entire line is a comment
+
+func main() {
+    var x = 10 # Inline comment after expression
+
+    # Multiple
+    # comment
+    # lines
+
+    # Comment with special chars: !@$%^&*()
+
+    # Comments between expressions
+    var a = 1
+    # middle comment
+    var b = 2
+
+    ###################################
+    # Comment that looks like a banner
+    ###################################
+
+    0
+}

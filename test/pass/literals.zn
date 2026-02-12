@@ -1,0 +1,41 @@
+# Test: Literal values
+
+func main() {
+    # Integers
+    var a = 42
+    var b = 0
+    var c = -17
+
+    # Hexadecimal integers
+    var hex1 = 0xFF
+    var hex2 = 0x10
+    var hex3 = 0xDEADBEEF
+
+    # Floats
+    var f1 = 3.14
+    var f2 = 0.5
+    var f3 = -2.718
+
+    # Scientific notation - integers
+    var sci1 = 1e10
+    var sci2 = 1E5
+
+    # Scientific notation - floats
+    var fsci1 = 1.5e10
+    var fsci2 = 2.5e-3
+
+    # Booleans
+    var t = true
+    var f = false
+
+    # Characters
+    var ch1 = 'A'
+    var ch2 = 'z'
+    var ch3 = '0'
+    var newline = '\n'
+    var tab = '\t'
+    var backslash = '\\'
+    var quote = '\''
+
+    0
+}
