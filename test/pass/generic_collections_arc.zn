@@ -1,0 +1,53 @@
+# Test ARC correctness for generic collections with complex types
+struct Point {
+    var x: int
+    var y: int
+}
+
+class Node {
+    var value: int
+    var name: String
+}
+
+struct Named {
+    var name: String
+    var id: int
+}
+
+func make_points() {
+    [Point(x: 1, y: 2), Point(x: 3, y: 4), Point(x: 5, y: 6)]
+}
+
+func make_nodes() {
+    [Node(value: 10, name: "first"), Node(value: 20, name: "second")]
+}
+
+func main() {
+    # Test array of structs through function return
+    var pts = make_points()
+    let p = pts[2]
+
+    # Test array of classes through function return (ARC)
+    var nodes = make_nodes()
+    let n = nodes[1]
+
+    # Test array reassignment (old array should be released)
+    var arr = [Named(name: "old", id: 1)]
+    arr = [Named(name: "new", id: 2)]
+
+    # Test nested arrays (inner arrays should be released)
+    var nested = [[1, 2, 3], [4, 5, 6]]
+    let inner = nested[0]
+    nested = [[7, 8, 9]]
+
+    # Test hash with class values (ARC on values)
+    var map = ["x": Node(value: 1, name: "a"), "y": Node(value: 2, name: "b")]
+    let nx = map["x"]
+    map = ["z": Node(value: 3, name: "c")]
+
+    # Test typed empty collections with user types
+    var empty_pts = Point[]
+    var empty_nodes = [String: Node]
+
+    0
+}

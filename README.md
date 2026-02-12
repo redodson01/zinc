@@ -482,6 +482,18 @@ class Config {
 var cfg = Config(width: 800, height: 600)  # debug defaults to false
 ```
 
+**Compound type fields** — class fields can be arrays, hashes, or other classes. ARC handles all retain/release automatically:
+
+```
+class Container {
+    var items: int[]
+    var data: [String: int]
+}
+
+var c = Container(items: [1, 2, 3], data: ["a": 1])
+c.items = [4, 5, 6]    # old array released, new array retained
+```
+
 **Memory management** is automatic. Objects are freed when their reference count reaches zero. No manual memory management is needed.
 
 > **Note:** ARC does not detect reference cycles. Avoid creating objects that reference each other in a cycle, as they will not be freed.
@@ -598,7 +610,7 @@ var flags = [true, false]     # bool[]
 var empty = int[]             # empty int array
 ```
 
-**Generic arrays** support any element type — structs, classes, tuples, objects, and nested arrays:
+**Generic arrays** support any element type — structs, classes, tuples, objects, nested arrays, and hashes:
 
 ```
 struct Point { var x: int; var y: int }
@@ -629,6 +641,74 @@ var arr = make_array()
 ```
 
 **Memory management** is automatic via reference counting. Arrays are freed when their last reference goes away. Bounds checking is performed at runtime — out-of-bounds access terminates the program with an error message.
+
+### Hash Tables
+
+Hash tables are dynamic, reference-counted key-value stores. All keys must have the same type, and all values must have the same type.
+
+```
+var ht = ["a": 1, "b": 2, "c": 3]
+var empty = [String: int]
+```
+
+**Key lookup** uses bracket notation:
+
+```
+let a = ht["a"]       # 1
+let b = ht["b"]       # 2
+```
+
+**Length** is available as a property:
+
+```
+let len = ht.length    # 3
+```
+
+**Mutation** updates existing keys or adds new ones:
+
+```
+ht["a"] = 99           # update existing key
+ht["d"] = 4            # add new key
+```
+
+**Key types** can be any primitive or string type. All keys must match. Empty hashes require explicit key and value types:
+
+```
+var str_ht = ["x": 10, "y": 20]   # String keys
+var int_ht = [1: "one", 2: "two"] # int keys
+var bool_ht = [true: 1, false: 0] # bool keys
+var empty = [String: int]          # empty hash
+```
+
+**Generic hash values** support any type — structs, classes, and other compound types:
+
+```
+class Node { var value: int }
+
+var map = ["a": Node(value: 100)]            # String -> Node
+var pts = [1: Point(x: 5, y: 6)]            # int -> Point
+var empty_map = [String: Node]               # empty hash with Node values
+```
+
+**Hash type annotations** can be used in function parameters:
+
+```
+func lookup(table: [String: int], key: String) {
+    table[key]
+}
+```
+
+**Functions** can return hash tables:
+
+```
+func make_hash() {
+    ["x": 10, "y": 20]
+}
+
+var ht = make_hash()
+```
+
+**Memory management** is automatic via reference counting, just like arrays.
 
 ### Built-in Functions
 

@@ -7,6 +7,11 @@ class Container {
     var label: String
 }
 
+# --- Class with hash field ---
+class Registry {
+    var data: [String: int]
+}
+
 # --- Class with class field (reassignment) ---
 class Inner {
     var value: int
@@ -19,6 +24,11 @@ class Outer {
 # --- Struct with array field ---
 struct Holder {
     var values: int[]
+}
+
+# --- Struct with hash field ---
+struct Config {
+    var settings: [String: int]
 }
 
 # --- Struct with String field (scope cleanup) ---
@@ -37,6 +47,11 @@ func distance(p: (x: int, y: int)) {
     p.x + p.y
 }
 
+# --- Function with hash type annotation ---
+func lookup(table: [String: int], key: String) {
+    table[key]
+}
+
 # --- Function with array type annotation ---
 func first(arr: int[]) {
     arr[0]
@@ -52,6 +67,14 @@ func main() {
     c.items = [4, 5, 6]
     let i2 = c.items[0]
 
+    # Class with hash field
+    var reg = Registry(data: ["a": 1, "b": 2])
+    let rv = reg.data["a"]
+
+    # Class with hash field: reassignment
+    reg.data = ["c": 3]
+    let rv2 = reg.data["c"]
+
     # Class with class field: reassignment
     var outer = Outer(child: Inner(value: 10))
     let ov = outer.child.value
@@ -62,9 +85,17 @@ func main() {
     var obj_a = { items: [10, 20, 30] }
     let oa = obj_a.items[1]
 
+    # Object with hash field
+    var obj_h = { data: ["x": 99] }
+    let oh = obj_h.data["x"]
+
     # Struct with array field (tests value-type ARC retain on creation + scope cleanup)
     var h = Holder(values: [7, 8, 9])
     let hv = h.values[0]
+
+    # Struct with hash field
+    var cfg = Config(settings: ["width": 800, "height": 600])
+    let cw = cfg.settings["width"]
 
     # Struct with String field (tests value-type scope cleanup)
     var named = Named(name: "hello", id: 1)
@@ -81,6 +112,10 @@ func main() {
     # Function with tuple type annotations
     let sp = sum_pair((3, 4))
     let dp = distance((x: 5, y: 10))
+
+    # Function with hash type annotation
+    let tbl = ["key": 42]
+    let lv = lookup(tbl, "key")
 
     # Function with array type annotation
     let fv = first([10, 20, 30])

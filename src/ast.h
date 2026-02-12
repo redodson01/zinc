@@ -27,6 +27,7 @@ typedef enum {
     TK_STRUCT,
     TK_CLASS,
     TK_ARRAY,
+    TK_HASH,
 } TypeKind;
 
 /* Resolved type representation — used by semantic analysis and codegen.
@@ -36,7 +37,8 @@ typedef struct Type {
     TypeKind kind;
     int is_optional;
     char *name;           /* struct/class/tuple/object canonical name */
-    struct Type *elem;    /* array element type */
+    struct Type *elem;    /* array element type, hash value type */
+    struct Type *key;     /* hash key type */
 } Type;
 
 /* Type helpers */
@@ -60,7 +62,8 @@ typedef struct TypeInfo {
     TypeInfoField *fields;  /* For object types { name: type, ... } */
     int is_object;          /* 1 for object types, 0 otherwise */
     int is_tuple;           /* 1 for tuple type annotations */
-    struct TypeInfo *elem;  /* array element type */
+    struct TypeInfo *elem;  /* array element type / hash value type */
+    struct TypeInfo *key;   /* hash key type */
 } TypeInfo;
 
 Type *type_from_info(TypeInfo *ti);
@@ -100,7 +103,10 @@ typedef enum {
     NODE_TUPLE,
     NODE_OBJECT_LITERAL,
     NODE_ARRAY_LITERAL,
+    NODE_HASH_LITERAL,
+    NODE_HASH_PAIR,
     NODE_TYPED_EMPTY_ARRAY,
+    NODE_TYPED_EMPTY_HASH,
 } NodeType;
 
 typedef struct ASTNode ASTNode;
@@ -152,7 +158,10 @@ struct ASTNode {
         struct { NodeList *elements; } tuple;
         struct { NodeList *fields; } object_literal;
         struct { NodeList *elems; } array_literal;
+        struct { NodeList *pairs; } hash_literal;
+        struct { ASTNode *key; ASTNode *value; } hash_pair;
         struct { TypeKind elem_type; char *elem_name; } typed_empty_array;
+        struct { TypeKind key_type; TypeKind value_type; char *value_name; } typed_empty_hash;
     } data;
 };
 
@@ -187,9 +196,13 @@ ASTNode *make_return(ASTNode *value);
 ASTNode *make_field_access(ASTNode *object, char *field);
 ASTNode *make_index_access(ASTNode *object, ASTNode *index);
 ASTNode *make_array_literal(NodeList *elems);
+ASTNode *make_hash_literal(NodeList *pairs);
+ASTNode *make_hash_pair(ASTNode *key, ASTNode *value);
 ASTNode *make_optional_check(ASTNode *operand);
 ASTNode *make_typed_empty_array(TypeKind elem_type);
 ASTNode *make_typed_empty_array_named(char *type_name);
+ASTNode *make_typed_empty_hash(TypeKind key_type, TypeKind value_type);
+ASTNode *make_typed_empty_hash_named(TypeKind key_type, char *value_name);
 ASTNode *make_type_def(char *name, NodeList *fields, int is_class);
 ASTNode *make_struct_field(char *name, TypeInfo *type_info, ASTNode *default_value, int is_const);
 ASTNode *make_named_arg(char *name, ASTNode *value);
@@ -201,6 +214,7 @@ TypeInfoField *make_type_info_field(char *name, TypeInfo *type);
 TypeInfoField *type_info_field_append(TypeInfoField *list, TypeInfoField *field);
 TypeInfo *make_object_type_info(TypeInfoField *fields);
 TypeInfo *make_struct_type_info(char *name);
+TypeInfo *make_hash_type_info(TypeInfo *key, TypeInfo *value);
 TypeInfo *make_tuple_type_info(TypeInfoField *fields);
 
 /* List utilities — O(1) append via tail pointer */

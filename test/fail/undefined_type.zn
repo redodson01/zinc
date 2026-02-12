@@ -1,9 +1,12 @@
-# ERRORS: 1
-# Tests: undefined type in typed empty array
+# ERRORS: 2
+# Tests: undefined type in typed empty array and typed empty hash
 
 func main() {
     # Error 1: undefined type in empty array
     var arr = Nonexistent[]
+
+    # Error 2: undefined type in empty hash
+    var ht = [String: Nonexistent]
 
     0
 }

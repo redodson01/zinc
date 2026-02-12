@@ -1,0 +1,11 @@
+# ERRORS: 3
+
+func main() {
+    # Mixed key types and value types (2 errors: key mismatch + value mismatch)
+    var ht = [1: "one", "two": 2]
+
+    # Mixed value types (1 error)
+    var ht2 = ["a": 1, "b": "two"]
+
+    0
+}

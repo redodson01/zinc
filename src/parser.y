@@ -65,7 +65,7 @@
 %type <node> struct_def class_def struct_field arg_or_named
 %type <node> interp_parts
 %type <list> top_level_list expr_list param_list arg_list struct_field_list
-%type <list> tuple_rest named_tuple_rest object_field_list array_elems
+%type <list> tuple_rest named_tuple_rest object_field_list array_elems hash_pairs
 
 %type <type> type_spec
 %type <type_field> object_type_fields object_type_field
@@ -123,6 +123,7 @@ type_spec:
     | IDENTIFIER                        { $$ = make_struct_type_info($1); }
     | LBRACE object_type_fields RBRACE  { $$ = make_object_type_info($2); }
     | type_spec LBRACKET RBRACKET       { TypeInfo *a = calloc(1, sizeof(TypeInfo)); a->kind = TK_ARRAY; a->elem = $1; $$ = a; }
+    | LBRACKET type_spec COLON type_spec RBRACKET  { $$ = make_hash_type_info($2, $4); }
     | type_spec QUESTION                { $$ = make_optional_type($1); }
     | LPAREN tuple_type_elems RPAREN   { $$ = make_tuple_type_info($2); }
     ;
@@ -356,11 +357,21 @@ primary:
     | interp_string                     { $$ = $1; }
     | type_kw LBRACKET RBRACKET         { $$ = make_typed_empty_array($1); $$->line = @1.first_line; }
     | LBRACKET array_elems RBRACKET     { $$ = make_array_literal($2); $$->line = @1.first_line; }
+    | LBRACKET type_kw COLON type_kw RBRACKET
+                                        { $$ = make_typed_empty_hash($2, $4); $$->line = @1.first_line; }
+    | LBRACKET type_kw COLON IDENTIFIER RBRACKET
+                                        { $$ = make_typed_empty_hash_named($2, $4); $$->line = @1.first_line; }
+    | LBRACKET hash_pairs RBRACKET      { $$ = make_hash_literal($2); $$->line = @1.first_line; }
     ;
 
 array_elems:
     expr                                { $$ = make_list($1); }
     | array_elems COMMA expr            { $$ = list_append($1, $3); }
+
+hash_pairs:
+    expr COLON expr                         { $$ = make_list(make_hash_pair($1, $3)); }
+    | hash_pairs COMMA expr COLON expr      { $$ = list_append($1, make_hash_pair($3, $5)); }
+    ;
 
 /* String interpolation: "hello ${name}!" desugars to ("hello " + name) + "!" */
 interp_string:

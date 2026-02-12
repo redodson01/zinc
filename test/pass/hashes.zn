@@ -1,0 +1,82 @@
+# Hash table tests
+
+struct HPoint {
+    var x: int
+    var y: int
+}
+
+class HNode {
+    var value: int
+}
+
+func make_hash() {
+    ["x": 10, "y": 20]
+}
+
+func main() {
+    # Hash literal with string keys
+    var ht = ["a": 1, "b": 2, "c": 3]
+
+    # Key lookup
+    let a = ht["a"]
+    let b = ht["b"]
+
+    # Length
+    let len = ht.length
+
+    # Mutation (update existing key)
+    ht["a"] = 99
+    let updated = ht["a"]
+
+    # Add new key
+    ht["d"] = 4
+
+    # Empty hash (typed)
+    var empty = [String: int]
+    let elen = empty.length
+
+    # Integer keys
+    var int_ht = [1: "one", 2: "two", 3: "three"]
+    let one = int_ht[1]
+    let ilen = int_ht.length
+
+    # Bool keys
+    var bool_ht = [true: 1, false: 0]
+    let tv = bool_ht[true]
+
+    # Float keys
+    var float_ht = [1.5: "one-half", 2.5: "two-half"]
+    let flv = float_ht[1.5]
+
+    # Char keys
+    var char_ht = ['a': 1, 'b': 2, 'c': 3]
+    let chv = char_ht['a']
+
+    # Reassignment with ARC
+    var h = ["x": 100]
+    h = ["y": 200]
+
+    # Let binding
+    let fixed = ["key": 42]
+    let fv = fixed["key"]
+
+    # Function returning hash
+    var fh = make_hash()
+    let fx = fh["x"]
+
+    # Hash with class values (reference types, ARC managed)
+    var map = ["a": HNode(value: 100), "b": HNode(value: 200)]
+    let na = map["a"]
+    let nav = na.value
+
+    # Hash with struct values (value types, heap-copied)
+    var pts = [1: HPoint(x: 5, y: 6), 2: HPoint(x: 7, y: 8)]
+    let p1 = pts[1]
+    let p1x = p1.x
+
+    # Typed empty hash with user type values
+    var empty_map = [String: HNode]
+    let mlen = empty_map.length
+
+    0
+}

@@ -25,7 +25,7 @@ typedef struct StructDef {
 /* Symbol table entry */
 typedef struct Symbol {
     char *name;
-    Type *type;          /* resolved type (includes kind, name, elem, is_optional) */
+    Type *type;          /* resolved type (includes kind, name, elem, key, is_optional) */
     int is_const;        /* 1 for let, 0 for var */
     int is_function;
     int is_extern;       /* 1 for extern declarations */

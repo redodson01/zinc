@@ -48,6 +48,7 @@ Type *type_clone(const Type *t) {
     c->is_optional = t->is_optional;
     c->name = t->name ? strdup(t->name) : NULL;
     c->elem = type_clone(t->elem);
+    c->key = type_clone(t->key);
     return c;
 }
 
@@ -55,6 +56,7 @@ void type_free(Type *t) {
     if (!t) return;
     free(t->name);
     type_free(t->elem);
+    type_free(t->key);
     free(t);
 }
 
@@ -68,6 +70,7 @@ int type_eq(const Type *a, const Type *b) {
         return strcmp(a->name, b->name) == 0;
     }
     if (!type_eq(a->elem, b->elem)) return 0;
+    if (!type_eq(a->key, b->key)) return 0;
     return 1;
 }
 
@@ -269,6 +272,19 @@ ASTNode *make_array_literal(NodeList *elems) {
     return n;
 }
 
+ASTNode *make_hash_literal(NodeList *pairs) {
+    ASTNode *n = alloc_node(NODE_HASH_LITERAL);
+    n->data.hash_literal.pairs = pairs;
+    return n;
+}
+
+ASTNode *make_hash_pair(ASTNode *key, ASTNode *value) {
+    ASTNode *n = alloc_node(NODE_HASH_PAIR);
+    n->data.hash_pair.key = key;
+    n->data.hash_pair.value = value;
+    return n;
+}
+
 ASTNode *make_optional_check(ASTNode *operand) {
     ASTNode *n = alloc_node(NODE_OPTIONAL_CHECK);
     n->data.optional_check.operand = operand;
@@ -286,6 +302,22 @@ ASTNode *make_typed_empty_array_named(char *type_name) {
     ASTNode *n = alloc_node(NODE_TYPED_EMPTY_ARRAY);
     n->data.typed_empty_array.elem_type = TK_STRUCT;
     n->data.typed_empty_array.elem_name = type_name;
+    return n;
+}
+
+ASTNode *make_typed_empty_hash(TypeKind key_type, TypeKind value_type) {
+    ASTNode *n = alloc_node(NODE_TYPED_EMPTY_HASH);
+    n->data.typed_empty_hash.key_type = key_type;
+    n->data.typed_empty_hash.value_type = value_type;
+    n->data.typed_empty_hash.value_name = NULL;
+    return n;
+}
+
+ASTNode *make_typed_empty_hash_named(TypeKind key_type, char *value_name) {
+    ASTNode *n = alloc_node(NODE_TYPED_EMPTY_HASH);
+    n->data.typed_empty_hash.key_type = key_type;
+    n->data.typed_empty_hash.value_type = TK_STRUCT;
+    n->data.typed_empty_hash.value_name = value_name;
     return n;
 }
 
@@ -355,6 +387,14 @@ TypeInfo *make_struct_type_info(char *name) {
     return t;
 }
 
+TypeInfo *make_hash_type_info(TypeInfo *key, TypeInfo *value) {
+    TypeInfo *t = calloc(1, sizeof(TypeInfo));
+    t->kind = TK_HASH;
+    t->key = key;
+    t->elem = value;
+    return t;
+}
+
 TypeInfo *make_tuple_type_info(TypeInfoField *fields) {
     TypeInfo *t = calloc(1, sizeof(TypeInfo));
     t->kind = TK_STRUCT;
@@ -370,6 +410,7 @@ Type *type_from_info(TypeInfo *ti) {
     if (ti->name)
         t->name = strdup(ti->name);
     if (ti->elem) t->elem = type_from_info(ti->elem);
+    if (ti->key)  t->key  = type_from_info(ti->key);
     return t;
 }
 
@@ -377,6 +418,7 @@ void free_type_info(TypeInfo *ti) {
     if (!ti) return;
     free(ti->name);
     free_type_info(ti->elem);
+    free_type_info(ti->key);
     TypeInfoField *f = ti->fields;
     while (f) {
         TypeInfoField *next = f->next;
@@ -614,8 +656,23 @@ void print_ast(ASTNode *node, int indent) {
         for (NodeList *e = node->data.array_literal.elems; e; e = e->next)
             print_ast(e->node, indent + 1);
         break;
+    case NODE_HASH_LITERAL:
+        printf("HashLiteral\n");
+        for (NodeList *p = node->data.hash_literal.pairs; p; p = p->next)
+            print_ast(p->node, indent + 1);
+        break;
+    case NODE_HASH_PAIR:
+        printf("HashPair\n");
+        print_ast(node->data.hash_pair.key, indent + 1);
+        print_ast(node->data.hash_pair.value, indent + 1);
+        break;
     case NODE_TYPED_EMPTY_ARRAY:
         printf("TypedEmptyArray: elem=%d\n", node->data.typed_empty_array.elem_type);
+        break;
+    case NODE_TYPED_EMPTY_HASH:
+        printf("TypedEmptyHash: key=%d val=%d\n",
+               node->data.typed_empty_hash.key_type,
+               node->data.typed_empty_hash.value_type);
         break;
     }
 }
@@ -724,8 +781,18 @@ void free_ast(ASTNode *node) {
     case NODE_ARRAY_LITERAL:
         free_list(node->data.array_literal.elems);
         break;
+    case NODE_HASH_LITERAL:
+        free_list(node->data.hash_literal.pairs);
+        break;
+    case NODE_HASH_PAIR:
+        free_ast(node->data.hash_pair.key);
+        free_ast(node->data.hash_pair.value);
+        break;
     case NODE_TYPED_EMPTY_ARRAY:
         free(node->data.typed_empty_array.elem_name);
+        break;
+    case NODE_TYPED_EMPTY_HASH:
+        free(node->data.typed_empty_hash.value_name);
         break;
     }
     type_free(node->resolved_type);

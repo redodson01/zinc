@@ -1,0 +1,79 @@
+# Generic collections — arrays and hashes of all types
+
+struct Point {
+    var x: int
+    var y: int
+}
+
+class Node {
+    var value: int
+}
+
+struct Named {
+    var name: String
+    var id: int
+}
+
+func main() {
+    # Array of structs (value types)
+    var points = [Point(x: 1, y: 2), Point(x: 3, y: 4)]
+    let p0 = points[0]
+    let px = p0.x
+    let py = p0.y
+
+    # Modify array element
+    points[0] = Point(x: 10, y: 20)
+    let p0m = points[0]
+
+    # Array of classes (reference types)
+    var nodes = [Node(value: 10), Node(value: 20)]
+    let n0 = nodes[0]
+    let nv = n0.value
+
+    # Array of arrays (nested)
+    var nested = [[1, 2], [3, 4]]
+    let inner = nested[0]
+    let val = inner[1]
+
+    # Array of strings
+    var strs = ["hello", "world"]
+    let s0 = strs[0]
+
+    # Array of structs with string fields (tests value-type release)
+    var named = [Named(name: "alice", id: 1), Named(name: "bob", id: 2)]
+    let n1 = named[0]
+    let nname = n1.name
+
+    # Hash with string keys and class values
+    var map = ["a": Node(value: 100)]
+    let na = map["a"]
+    let nav = na.value
+
+    # Hash with int keys and struct values
+    var pts = [1: Point(x: 5, y: 6), 2: Point(x: 7, y: 8)]
+    let p1 = pts[1]
+    let p1x = p1.x
+
+    # Hash with string keys and string values (both keys and values ARC'd)
+    var ss = ["key1": "val1", "key2": "val2"]
+    let sv = ss["key1"]
+
+    # Tuple in array
+    var tuples = [(1, "a"), (2, "b")]
+    let t0 = tuples[0]
+
+    # Array of hashes
+    var arr_of_hash = [["x": 1], ["y": 2]]
+    let h0 = arr_of_hash[0]
+    let hv = h0["x"]
+
+    # Typed empty array of user type
+    var empty_pts = Point[]
+    let elen = empty_pts.length
+
+    # Typed empty hash with user-type values
+    var empty_map = [String: Node]
+    let mlen = empty_map.length
+
+    0
+}

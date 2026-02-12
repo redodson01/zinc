@@ -18,6 +18,8 @@ static void emit_nested_releases(CodegenContext *ctx, const char *prefix, Struct
             cg_emitf(ctx, "        __%s_release(%s%s);\n", ft->name, prefix, fd->name);
         } else if (ft->kind == TK_ARRAY) {
             cg_emitf(ctx, "        __zn_arr_release(%s%s);\n", prefix, fd->name);
+        } else if (ft->kind == TK_HASH) {
+            cg_emitf(ctx, "        __zn_hash_release(%s%s);\n", prefix, fd->name);
         } else if (ft->kind == TK_STRUCT && ft->name) {
             StructDef *inner = lookup_struct(ctx->sem_ctx, ft->name);
             if (inner) {
@@ -167,6 +169,8 @@ void gen_collection_helpers(CodegenContext *ctx) {
         if (is_value) {
             cg_emitf(ctx, "static void __zn_val_rel_%s(void *p);\n", name);
         }
+        cg_emitf(ctx, "static unsigned int __zn_hash_%s(ZnValue v);\n", name);
+        cg_emitf(ctx, "static bool __zn_eq_%s(ZnValue a, ZnValue b);\n", name);
     }
     cg_emit(ctx, "\n");
 
@@ -177,6 +181,7 @@ void gen_collection_helpers(CodegenContext *ctx) {
         bool is_class = sd->is_class;
         bool is_value = !sd->is_class;
         StructFieldDef *fields = sd->fields;
+        int field_count = sd->field_count;
 
         /* Retain/release wrappers for reference types */
         if (is_class) {
@@ -195,6 +200,8 @@ void gen_collection_helpers(CodegenContext *ctx) {
                     cg_emitf(ctx, "    __zn_str_release(self->%s);\n", fd->name);
                 } else if (ft->kind == TK_ARRAY) {
                     cg_emitf(ctx, "    __zn_arr_release(self->%s);\n", fd->name);
+                } else if (ft->kind == TK_HASH) {
+                    cg_emitf(ctx, "    __zn_hash_release(self->%s);\n", fd->name);
                 } else if (ft->kind == TK_CLASS && ft->name) {
                     cg_emitf(ctx, "    __%s_release(self->%s);\n", ft->name, fd->name);
                 } else if (ft->kind == TK_STRUCT && ft->name) {
@@ -211,6 +218,63 @@ void gen_collection_helpers(CodegenContext *ctx) {
             cg_emit(ctx, "}\n");
         }
 
-        cg_emit(ctx, "\n");
+        /* Hashcode — field-by-field djb2 */
+        cg_emitf(ctx, "static unsigned int __zn_hash_%s(ZnValue v) {\n", name);
+        cg_emitf(ctx, "    %s *self = (%s*)v.as.ptr;\n", name, name);
+        cg_emit(ctx, "    unsigned int h = 5381;\n");
+        for (StructFieldDef *fd = fields; fd; fd = fd->next) {
+            Type *ft = fd->type;
+            if (!ft) continue;
+            const char *fname = fd->name;
+            if (ft->kind == TK_INT) {
+                cg_emitf(ctx, "    h = ((h << 5) + h) ^ (unsigned int)((uint64_t)self->%s ^ ((uint64_t)self->%s >> 32));\n", fname, fname);
+            } else if (ft->kind == TK_FLOAT) {
+                cg_emitf(ctx, "    { union { double d; uint64_t u; } __cv; __cv.d = self->%s; h = ((h << 5) + h) ^ (unsigned int)(__cv.u ^ (__cv.u >> 32)); }\n", fname);
+            } else if (ft->kind == TK_BOOL) {
+                cg_emitf(ctx, "    h = ((h << 5) + h) ^ (self->%s ? 1u : 0u);\n", fname);
+            } else if (ft->kind == TK_CHAR) {
+                cg_emitf(ctx, "    h = ((h << 5) + h) ^ (unsigned int)self->%s;\n", fname);
+            } else if (ft->kind == TK_STRING) {
+                cg_emitf(ctx, "    { ZnValue __sv = __zn_val_string(self->%s); h = ((h << 5) + h) ^ __zn_val_hashcode(__sv); }\n", fname);
+            } else if (ft->kind == TK_CLASS && ft->name) {
+                /* Class field: hash pointer identity */
+                cg_emitf(ctx, "    h = ((h << 5) + h) ^ (unsigned int)((uintptr_t)self->%s);\n", fname);
+            } else if (ft->kind == TK_STRUCT && ft->name) {
+                /* Value type field: hash content */
+                cg_emitf(ctx, "    { ZnValue __sv; __sv.tag = ZN_TAG_VAL; __sv.as.ptr = &self->%s; h = ((h << 5) + h) ^ __zn_hash_%s(__sv); }\n", fname, ft->name);
+            } else if (ft->kind == TK_ARRAY || ft->kind == TK_HASH) {
+                /* Array/Hash: hash pointer identity */
+                cg_emitf(ctx, "    h = ((h << 5) + h) ^ (unsigned int)((uintptr_t)self->%s);\n", fname);
+            }
+        }
+        cg_emit(ctx, "    return h;\n");
+        cg_emit(ctx, "}\n");
+
+        /* Equality — field-by-field */
+        cg_emitf(ctx, "static bool __zn_eq_%s(ZnValue a, ZnValue b) {\n", name);
+        cg_emitf(ctx, "    %s *pa = (%s*)a.as.ptr, *pb = (%s*)b.as.ptr;\n", name, name, name);
+        cg_emit(ctx, "    return ");
+        int fi = 0;
+        for (StructFieldDef *fd = fields; fd; fd = fd->next, fi++) {
+            if (fi > 0) cg_emit(ctx, " && ");
+            Type *ft = fd->type;
+            const char *fname = fd->name;
+            if (ft && ft->kind == TK_STRING) {
+                cg_emitf(ctx, "__zn_val_eq(__zn_val_string(pa->%s), __zn_val_string(pb->%s))", fname, fname);
+            } else if (ft && ft->kind == TK_CLASS && ft->name) {
+                /* Class field: pointer equality */
+                cg_emitf(ctx, "pa->%s == pb->%s", fname, fname);
+            } else if (ft && ft->kind == TK_STRUCT && ft->name) {
+                /* Value type: content equality */
+                cg_emitf(ctx, "({ ZnValue __a, __b; __a.as.ptr = &pa->%s; __b.as.ptr = &pb->%s; __zn_eq_%s(__a, __b); })", fname, fname, ft->name);
+            } else if (ft && (ft->kind == TK_ARRAY || ft->kind == TK_HASH)) {
+                cg_emitf(ctx, "pa->%s == pb->%s", fname, fname);
+            } else {
+                cg_emitf(ctx, "pa->%s == pb->%s", fname, fname);
+            }
+        }
+        if (field_count == 0) cg_emit(ctx, "true");
+        cg_emit(ctx, ";\n");
+        cg_emit(ctx, "}\n\n");
     }
 }

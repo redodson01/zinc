@@ -10,6 +10,7 @@ static void emit_elem_retain_cb(CodegenContext *ctx, Type *elem) {
     if (!elem) { cg_emit(ctx, "NULL"); return; }
     if (elem->kind == TK_STRING) { cg_emit(ctx, "(ZnElemFn)__zn_str_retain_v"); }
     else if (elem->kind == TK_ARRAY) { cg_emit(ctx, "(ZnElemFn)__zn_arr_retain_v"); }
+    else if (elem->kind == TK_HASH) { cg_emit(ctx, "(ZnElemFn)__zn_hash_retain_v"); }
     else if (elem->kind == TK_CLASS && elem->name) {
         cg_emitf(ctx, "(ZnElemFn)__zn_ret_%s", elem->name);
     } else { cg_emit(ctx, "NULL"); }
@@ -19,6 +20,7 @@ static void emit_elem_release_cb(CodegenContext *ctx, Type *elem) {
     if (!elem) { cg_emit(ctx, "NULL"); return; }
     if (elem->kind == TK_STRING) { cg_emit(ctx, "(ZnElemFn)__zn_str_release_v"); }
     else if (elem->kind == TK_ARRAY) { cg_emit(ctx, "(ZnElemFn)__zn_arr_release_v"); }
+    else if (elem->kind == TK_HASH) { cg_emit(ctx, "(ZnElemFn)__zn_hash_release_v"); }
     else if (elem->kind == TK_CLASS && elem->name) {
         cg_emitf(ctx, "(ZnElemFn)__zn_rel_%s", elem->name);
     } else if (elem->kind == TK_STRUCT && elem->name) {
@@ -26,11 +28,44 @@ static void emit_elem_release_cb(CodegenContext *ctx, Type *elem) {
     } else { cg_emit(ctx, "NULL"); }
 }
 
+static void emit_hashcode_cb(CodegenContext *ctx, Type *elem) {
+    if (!elem) { cg_emit(ctx, "__zn_default_hashcode"); return; }
+    if (elem->kind == TK_STRUCT && elem->name) {
+        cg_emitf(ctx, "__zn_hash_%s", elem->name);
+    } else { cg_emit(ctx, "__zn_default_hashcode"); }
+}
+
+static void emit_equals_cb(CodegenContext *ctx, Type *elem) {
+    if (!elem) { cg_emit(ctx, "__zn_default_equals"); return; }
+    if (elem->kind == TK_STRUCT && elem->name) {
+        cg_emitf(ctx, "__zn_eq_%s", elem->name);
+    } else { cg_emit(ctx, "__zn_default_equals"); }
+}
+
 static void emit_arr_callbacks(CodegenContext *ctx, Type *elem) {
     cg_emit(ctx, ", ");
     emit_elem_retain_cb(ctx, elem);
     cg_emit(ctx, ", ");
     emit_elem_release_cb(ctx, elem);
+    cg_emit(ctx, ", ");
+    emit_hashcode_cb(ctx, elem);
+    cg_emit(ctx, ", ");
+    emit_equals_cb(ctx, elem);
+}
+
+static void emit_hash_callbacks(CodegenContext *ctx, Type *key, Type *val) {
+    cg_emit(ctx, ", ");
+    emit_elem_retain_cb(ctx, key);
+    cg_emit(ctx, ", ");
+    emit_elem_release_cb(ctx, key);
+    cg_emit(ctx, ", ");
+    emit_hashcode_cb(ctx, key);
+    cg_emit(ctx, ", ");
+    emit_equals_cb(ctx, key);
+    cg_emit(ctx, ", ");
+    emit_elem_retain_cb(ctx, val);
+    cg_emit(ctx, ", ");
+    emit_elem_release_cb(ctx, val);
 }
 
 /* Emit a retain call for a named variable of the given ref type.
@@ -60,7 +95,7 @@ static int struct_has_rc_fields(StructDef *sd, SemanticContext *sem_ctx) {
     for (StructFieldDef *fd = sd->fields; fd; fd = fd->next) {
         if (!fd->type) continue;
         if (fd->type->kind == TK_STRING || fd->type->kind == TK_ARRAY ||
-            fd->type->kind == TK_CLASS) return 1;
+            fd->type->kind == TK_HASH || fd->type->kind == TK_CLASS) return 1;
         if (fd->type->kind == TK_STRUCT && fd->type->name) {
             StructDef *inner = lookup_struct(sem_ctx, fd->type->name);
             if (inner && struct_has_rc_fields(inner, sem_ctx)) return 1;
@@ -85,6 +120,7 @@ static void scope_track_ref(CodegenContext *ctx, const char *name, Type *type) {
     case TK_STRING: cg_scope_add_ref(ctx, name, "zn_str"); break;
     case TK_CLASS:  if (type->name) cg_scope_add_ref(ctx, name, type->name); break;
     case TK_ARRAY:  cg_scope_add_ref(ctx, name, "zn_arr"); break;
+    case TK_HASH:   cg_scope_add_ref(ctx, name, "zn_hash"); break;
     case TK_STRUCT:
         if (type->name) {
             StructDef *sd = lookup_struct(ctx->sem_ctx, type->name);
@@ -118,6 +154,7 @@ void gen_box_expr(CodegenContext *ctx, ASTNode *expr) {
     case TK_CHAR:   cg_emit(ctx, "__zn_val_char("); gen_expr(ctx, expr); cg_emit(ctx, ")"); break;
     case TK_STRING: cg_emit(ctx, "__zn_val_string("); gen_expr(ctx, expr); cg_emit(ctx, ")"); break;
     case TK_ARRAY:  cg_emit(ctx, "__zn_val_array((ZnArray*)("); gen_expr(ctx, expr); cg_emit(ctx, "))"); break;
+    case TK_HASH:   cg_emit(ctx, "__zn_val_hash((ZnHash*)("); gen_expr(ctx, expr); cg_emit(ctx, "))"); break;
     case TK_CLASS:
         /* Class (reference type): wrap pointer */
         cg_emit(ctx, "__zn_val_ref("); gen_expr(ctx, expr); cg_emit(ctx, ")");
@@ -440,8 +477,7 @@ void gen_expr(CodegenContext *ctx, ASTNode *expr) {
                 /* Check if any field needs ARC retain */
                 int needs_arc = 0;
                 for (StructFieldDef *fd = sd->fields; fd; fd = fd->next) {
-                    if (fd->type && (fd->type->kind == TK_STRING || fd->type->kind == TK_CLASS ||
-                        fd->type->kind == TK_ARRAY)) {
+                    if (fd->type && is_ref_type(fd->type->kind)) {
                         needs_arc = 1;
                         break;
                     }
@@ -560,9 +596,10 @@ void gen_expr(CodegenContext *ctx, ASTNode *expr) {
             cg_emit(ctx, ")->_len)");
             break;
         }
-        /* Array .length */
+        /* Array/Hash .length */
         if (expr->data.field_access.object->resolved_type &&
-            expr->data.field_access.object->resolved_type->kind == TK_ARRAY &&
+            (expr->data.field_access.object->resolved_type->kind == TK_ARRAY ||
+             expr->data.field_access.object->resolved_type->kind == TK_HASH) &&
             strcmp(expr->data.field_access.field, "length") == 0) {
             cg_emit(ctx, "(int64_t)((");
             gen_expr(ctx, expr->data.field_access.object);
@@ -586,8 +623,7 @@ void gen_expr(CodegenContext *ctx, ASTNode *expr) {
         int needs_arc = 0;
         if (sd) {
             for (StructFieldDef *fd = sd->fields; fd; fd = fd->next) {
-                if (fd->type && (fd->type->kind == TK_STRING || fd->type->kind == TK_CLASS ||
-                    fd->type->kind == TK_ARRAY)) {
+                if (fd->type && is_ref_type(fd->type->kind)) {
                     needs_arc = 1;
                     break;
                 }
@@ -680,6 +716,13 @@ void gen_expr(CodegenContext *ctx, ASTNode *expr) {
                 cg_emit(ctx, ", ");
                 gen_expr(ctx, expr->data.index_access.index);
                 cg_emit(ctx, ").as.ptr");
+            } else if (arr_elem && arr_elem->kind == TK_HASH) {
+                /* Element is a hash: cast .as.ptr */
+                cg_emit(ctx, "(ZnHash*)__zn_arr_get(");
+                gen_expr(ctx, expr->data.index_access.object);
+                cg_emit(ctx, ", ");
+                gen_expr(ctx, expr->data.index_access.index);
+                cg_emit(ctx, ").as.ptr");
             } else if (arr_elem && arr_elem->kind == TK_CLASS && arr_elem->name) {
                 /* Element is a class: cast .as.ptr to class pointer */
                 cg_emitf(ctx, "(%s*)__zn_arr_get(", arr_elem->name);
@@ -701,6 +744,42 @@ void gen_expr(CodegenContext *ctx, ASTNode *expr) {
                 gen_expr(ctx, expr->data.index_access.object);
                 cg_emit(ctx, ", ");
                 gen_expr(ctx, expr->data.index_access.index);
+                cg_emit(ctx, "))");
+            }
+        } else if (expr->data.index_access.object->resolved_type &&
+                   expr->data.index_access.object->resolved_type->kind == TK_HASH) {
+            /* Hash indexing: box key, unbox value from __zn_hash_get */
+            Type *hash_val = expr->resolved_type;
+            if (hash_val && hash_val->kind == TK_ARRAY) {
+                cg_emit(ctx, "(ZnArray*)__zn_hash_get(");
+                gen_expr(ctx, expr->data.index_access.object);
+                cg_emit(ctx, ", ");
+                gen_box_expr(ctx, expr->data.index_access.index);
+                cg_emit(ctx, ").as.ptr");
+            } else if (hash_val && hash_val->kind == TK_HASH) {
+                cg_emit(ctx, "(ZnHash*)__zn_hash_get(");
+                gen_expr(ctx, expr->data.index_access.object);
+                cg_emit(ctx, ", ");
+                gen_box_expr(ctx, expr->data.index_access.index);
+                cg_emit(ctx, ").as.ptr");
+            } else if (hash_val && hash_val->kind == TK_CLASS && hash_val->name) {
+                cg_emitf(ctx, "(%s*)__zn_hash_get(", hash_val->name);
+                gen_expr(ctx, expr->data.index_access.object);
+                cg_emit(ctx, ", ");
+                gen_box_expr(ctx, expr->data.index_access.index);
+                cg_emit(ctx, ").as.ptr");
+            } else if (hash_val && hash_val->kind == TK_STRUCT && hash_val->name) {
+                cg_emitf(ctx, "*(%s*)__zn_hash_get(", hash_val->name);
+                gen_expr(ctx, expr->data.index_access.object);
+                cg_emit(ctx, ", ");
+                gen_box_expr(ctx, expr->data.index_access.index);
+                cg_emit(ctx, ").as.ptr");
+            } else {
+                cg_emitf(ctx, "%s(", unbox_func_for(hash_val ? hash_val->kind : TK_UNKNOWN));
+                cg_emit(ctx, "__zn_hash_get(");
+                gen_expr(ctx, expr->data.index_access.object);
+                cg_emit(ctx, ", ");
+                gen_box_expr(ctx, expr->data.index_access.index);
                 cg_emit(ctx, "))");
             }
         } else {
@@ -742,10 +821,62 @@ void gen_expr(CodegenContext *ctx, ASTNode *expr) {
         cg_emitf(ctx, "__t%d; })", t);
         break;
     }
+    case NODE_HASH_LITERAL: {
+        int n = 0;
+        for (NodeList *p = expr->data.hash_literal.pairs; p; p = p->next) n++;
+        int t = ctx->temp_counter++;
+        cg_emitf(ctx, "({ ZnHash *__t%d = __zn_hash_alloc(%d", t, n > 0 ? n * 2 : 8);
+        emit_hash_callbacks(ctx,
+            expr->resolved_type ? expr->resolved_type->key : NULL,
+            expr->resolved_type ? expr->resolved_type->elem : NULL);
+        cg_emit(ctx, "); ");
+        for (NodeList *p = expr->data.hash_literal.pairs; p; p = p->next) {
+            ASTNode *pair = p->node;
+            ASTNode *hk = pair->data.hash_pair.key;
+            ASTNode *hv = pair->data.hash_pair.value;
+            int fresh_key = hk->resolved_type && is_ref_type(hk->resolved_type->kind) && hk->is_fresh_alloc;
+            int fresh_val = hv->resolved_type && is_ref_type(hv->resolved_type->kind) && hv->is_fresh_alloc;
+            char kname[64] = {0}, vname[64] = {0};
+            if (fresh_key) {
+                int kt = ctx->temp_counter++;
+                snprintf(kname, sizeof(kname), "__pk%d", kt);
+                emit_ref_temp_decl(ctx, kname, hk->resolved_type);
+                gen_expr(ctx, hk);
+                cg_emit(ctx, "; ");
+            }
+            if (fresh_val) {
+                int vt = ctx->temp_counter++;
+                snprintf(vname, sizeof(vname), "__pv%d", vt);
+                emit_ref_temp_decl(ctx, vname, hv->resolved_type);
+                gen_expr(ctx, hv);
+                cg_emit(ctx, "; ");
+            }
+            cg_emitf(ctx, "__zn_hash_set(__t%d, ", t);
+            if (fresh_key) emit_box_call(ctx, kname, hk->resolved_type);
+            else gen_box_expr(ctx, hk);
+            cg_emit(ctx, ", ");
+            if (fresh_val) emit_box_call(ctx, vname, hv->resolved_type);
+            else gen_box_expr(ctx, hv);
+            cg_emit(ctx, "); ");
+            if (fresh_key) { emit_release_call(ctx, kname, hk->resolved_type); cg_emit(ctx, "; "); }
+            if (fresh_val) { emit_release_call(ctx, vname, hv->resolved_type); cg_emit(ctx, "; "); }
+        }
+        cg_emitf(ctx, "__t%d; })", t);
+        break;
+    }
     case NODE_TYPED_EMPTY_ARRAY: {
         int t = ctx->temp_counter++;
         cg_emitf(ctx, "({ ZnArray *__t%d = __zn_arr_alloc(0", t);
         emit_arr_callbacks(ctx, expr->resolved_type ? expr->resolved_type->elem : NULL);
+        cg_emitf(ctx, "); __t%d; })", t);
+        break;
+    }
+    case NODE_TYPED_EMPTY_HASH: {
+        int t = ctx->temp_counter++;
+        cg_emitf(ctx, "({ ZnHash *__t%d = __zn_hash_alloc(8", t);
+        emit_hash_callbacks(ctx,
+            expr->resolved_type ? expr->resolved_type->key : NULL,
+            expr->resolved_type ? expr->resolved_type->elem : NULL);
         cg_emitf(ctx, "); __t%d; })", t);
         break;
     }
@@ -999,7 +1130,7 @@ void gen_stmt(CodegenContext *ctx, ASTNode *node) {
                 cg_emitf(ctx, "%s *%s = ", vt->name, name);
         } else if (t == TK_STRUCT && vt->name) {
             cg_emitf(ctx, "%s%s %s = ", cq, vt->name, name);
-        } else if (t == TK_STRING || t == TK_ARRAY) {
+        } else if (t == TK_STRING || t == TK_ARRAY || t == TK_HASH) {
             cg_emitf(ctx, "%s %s = ", type_to_c(t), name);
         } else {
             cg_emitf(ctx, "%s%s %s = ", cq, type_to_c(t), name);
@@ -1202,7 +1333,7 @@ void gen_stmt(CodegenContext *ctx, ASTNode *node) {
                     cg_emitf(ctx, "%s *__ret%d = ", rt->name, t);
                 else if (rk == TK_STRUCT && rt->name)
                     cg_emitf(ctx, "%s __ret%d = ", rt->name, t);
-                else if (rk == TK_STRING || rk == TK_ARRAY)
+                else if (rk == TK_STRING || rk == TK_ARRAY || rk == TK_HASH)
                     cg_emitf(ctx, "%s __ret%d = ", type_to_c(rk), t);
                 else
                     cg_emitf(ctx, "%s __ret%d = ", type_to_c(rk), t);
@@ -1224,7 +1355,7 @@ void gen_stmt(CodegenContext *ctx, ASTNode *node) {
         TypeKind val_kind = val->resolved_type ? val->resolved_type->kind : TK_UNKNOWN;
 
         if (tgt->type == NODE_INDEX) {
-            /* Index assignment: arr[i] = val */
+            /* Index assignment: arr[i] = val or hash[k] = val */
             ASTNode *obj = tgt->data.index_access.object;
             TypeKind obj_kind = obj->resolved_type ? obj->resolved_type->kind : TK_UNKNOWN;
             if (obj_kind == TK_ARRAY) {
@@ -1251,6 +1382,33 @@ void gen_stmt(CodegenContext *ctx, ASTNode *node) {
                     gen_expr(ctx, obj);
                     cg_emit(ctx, ", ");
                     gen_expr(ctx, tgt->data.index_access.index);
+                    cg_emit(ctx, ", ");
+                    gen_box_expr(ctx, val);
+                    cg_emit(ctx, ");\n");
+                }
+            } else if (obj_kind == TK_HASH) {
+                int fresh_val = val->resolved_type && is_ref_type(val->resolved_type->kind) && val->is_fresh_alloc;
+                if (fresh_val) {
+                    int pt = ctx->temp_counter++;
+                    char pname[64];
+                    snprintf(pname, sizeof(pname), "__ps%d", pt);
+                    cg_emit(ctx, "{ ");
+                    emit_ref_temp_decl(ctx, pname, val->resolved_type);
+                    gen_expr(ctx, val);
+                    cg_emit(ctx, "; __zn_hash_set(");
+                    gen_expr(ctx, obj);
+                    cg_emit(ctx, ", ");
+                    gen_box_expr(ctx, tgt->data.index_access.index);
+                    cg_emit(ctx, ", ");
+                    emit_box_call(ctx, pname, val->resolved_type);
+                    cg_emit(ctx, "); ");
+                    emit_release_call(ctx, pname, val->resolved_type);
+                    cg_emit(ctx, "; }\n");
+                } else {
+                    cg_emit(ctx, "__zn_hash_set(");
+                    gen_expr(ctx, obj);
+                    cg_emit(ctx, ", ");
+                    gen_box_expr(ctx, tgt->data.index_access.index);
                     cg_emit(ctx, ", ");
                     gen_box_expr(ctx, val);
                     cg_emit(ctx, ");\n");
@@ -1413,8 +1571,6 @@ void gen_func_proto(CodegenContext *ctx, ASTNode *func, int to_header) {
         ret_str = sym->type->name;
     } else if (ret_type == TK_STRUCT && sym && sym->type->name) {
         ret_str = sym->type->name;
-    } else if (ret_type == TK_ARRAY) {
-        ret_str = "ZnArray*";
     } else {
         ret_str = type_to_c(ret_type);
     }
@@ -1511,6 +1667,19 @@ void gen_func_body(CodegenContext *ctx, ASTNode *block, TypeKind ret_type) {
             if (!last_node->is_fresh_alloc) {
                 cg_emit_indent(ctx);
                 cg_emitf(ctx, "__zn_arr_retain(__ret%d);\n", t);
+            }
+            emit_scope_releases(ctx);
+            cg_emit_indent(ctx);
+            cg_emitf(ctx, "return __ret%d;\n", t);
+        } else if (ret_type == TK_HASH) {
+            int t = ctx->temp_counter++;
+            cg_emit_indent(ctx);
+            cg_emitf(ctx, "ZnHash *__ret%d = ", t);
+            gen_expr(ctx, last_node);
+            cg_emit(ctx, ";\n");
+            if (!last_node->is_fresh_alloc) {
+                cg_emit_indent(ctx);
+                cg_emitf(ctx, "__zn_hash_retain(__ret%d);\n", t);
             }
             emit_scope_releases(ctx);
             cg_emit_indent(ctx);

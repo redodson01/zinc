@@ -7,9 +7,9 @@
  * but keeps the codegen simple and the generated code readable. (#8)
  *
  * Split into three files:
- *   codegen.c       -- shared infrastructure, emit helpers, ARC scope, generate()
- *   codegen_types.c -- struct/class/tuple/object layout
- *   codegen_expr.c  -- expression/statement generation, function emission
+ *   codegen.c       — shared infrastructure, emit helpers, ARC scope, generate()
+ *   codegen_types.c — struct/class/tuple/object layout
+ *   codegen_expr.c  — expression/statement generation, function emission
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -59,6 +59,7 @@ const char *type_to_c(TypeKind t) {
     case TK_STRUCT: return "/* struct */";
     case TK_CLASS:  return "/* class */";
     case TK_ARRAY:  return "ZnArray*";
+    case TK_HASH:   return "ZnHash*";
     default:        return "int64_t";
     }
 }
@@ -74,7 +75,7 @@ const char *opt_type_for(TypeKind t) {
 }
 
 int is_ref_type(TypeKind t) {
-    return t == TK_STRING || t == TK_CLASS || t == TK_ARRAY;
+    return t == TK_STRING || t == TK_CLASS || t == TK_ARRAY || t == TK_HASH;
 }
 
 int expr_is_string(ASTNode *expr) {
@@ -131,6 +132,9 @@ static void emit_value_type_field_releases(CodegenContext *ctx, const char *pref
         } else if (ft->kind == TK_ARRAY) {
             cg_emit_indent(ctx);
             cg_emitf(ctx, "__zn_arr_release(%s.%s);\n", prefix, fd->name);
+        } else if (ft->kind == TK_HASH) {
+            cg_emit_indent(ctx);
+            cg_emitf(ctx, "__zn_hash_release(%s.%s);\n", prefix, fd->name);
         } else if (ft->kind == TK_CLASS && ft->name) {
             cg_emit_indent(ctx);
             cg_emitf(ctx, "__%s_release(%s.%s);\n", ft->name, prefix, fd->name);
@@ -186,6 +190,7 @@ void emit_retain_call(CodegenContext *ctx, const char *expr, Type *type) {
     case TK_STRING: cg_emitf(ctx, "__zn_str_retain(%s)", expr); break;
     case TK_CLASS:  if (type->name) cg_emitf(ctx, "__%s_retain(%s)", type->name, expr); break;
     case TK_ARRAY:  cg_emitf(ctx, "__zn_arr_retain(%s)", expr); break;
+    case TK_HASH:   cg_emitf(ctx, "__zn_hash_retain(%s)", expr); break;
     default: break;
     }
 }
@@ -196,6 +201,7 @@ void emit_release_call(CodegenContext *ctx, const char *expr, Type *type) {
     case TK_STRING: cg_emitf(ctx, "__zn_str_release(%s)", expr); break;
     case TK_CLASS:  if (type->name) cg_emitf(ctx, "__%s_release(%s)", type->name, expr); break;
     case TK_ARRAY:  cg_emitf(ctx, "__zn_arr_release(%s)", expr); break;
+    case TK_HASH:   cg_emitf(ctx, "__zn_hash_release(%s)", expr); break;
     default: break;
     }
 }
@@ -207,6 +213,7 @@ void emit_retain_open(CodegenContext *ctx, Type *type) {
     case TK_STRING: cg_emit(ctx, "__zn_str_retain("); break;
     case TK_CLASS:  if (type->name) cg_emitf(ctx, "__%s_retain(", type->name); break;
     case TK_ARRAY:  cg_emit(ctx, "__zn_arr_retain("); break;
+    case TK_HASH:   cg_emit(ctx, "__zn_hash_retain("); break;
     default: break;
     }
 }
@@ -217,6 +224,7 @@ void emit_release_open(CodegenContext *ctx, Type *type) {
     case TK_STRING: cg_emit(ctx, "__zn_str_release("); break;
     case TK_CLASS:  if (type->name) cg_emitf(ctx, "__%s_release(", type->name); break;
     case TK_ARRAY:  cg_emit(ctx, "__zn_arr_release("); break;
+    case TK_HASH:   cg_emit(ctx, "__zn_hash_release("); break;
     default: break;
     }
 }
@@ -226,6 +234,7 @@ void emit_box_call(CodegenContext *ctx, const char *expr, Type *type) {
     switch (type->kind) {
     case TK_STRING: cg_emitf(ctx, "__zn_val_string(%s)", expr); break;
     case TK_ARRAY:  cg_emitf(ctx, "__zn_val_array((ZnArray*)(%s))", expr); break;
+    case TK_HASH:   cg_emitf(ctx, "__zn_val_hash((ZnHash*)(%s))", expr); break;
     case TK_CLASS:  cg_emitf(ctx, "__zn_val_ref(%s)", expr); break;
     default: break;
     }
@@ -335,6 +344,13 @@ static void ast_walk(ASTNode *node, ASTVisitor visitor, void *data) {
     case NODE_ARRAY_LITERAL:
         ast_walk_list(node->data.array_literal.elems, visitor, data);
         break;
+    case NODE_HASH_LITERAL:
+        ast_walk_list(node->data.hash_literal.pairs, visitor, data);
+        break;
+    case NODE_HASH_PAIR:
+        ast_walk(node->data.hash_pair.key, visitor, data);
+        ast_walk(node->data.hash_pair.value, visitor, data);
+        break;
     case NODE_OPTIONAL_CHECK:
         ast_walk(node->data.optional_check.operand, visitor, data);
         break;
@@ -348,7 +364,7 @@ static void ast_walk_list(NodeList *list, ASTVisitor visitor, void *data) {
     }
 }
 
-/* String literal visitor -- assigns codegen-side IDs and emits static structs (#3, #6) */
+/* String literal visitor — assigns codegen-side IDs and emits static structs (#3, #6) */
 static void string_literal_visitor(ASTNode *node, void *data) {
     if (node->type != NODE_STRING) return;
     CodegenContext *ctx = data;
@@ -415,7 +431,7 @@ void generate(CodegenContext *ctx, ASTNode *root) {
     /* Generate anonymous object typedefs + ARC functions */
     gen_object_typedefs(ctx);
 
-    /* Generate collection helper functions (retain/release wrappers) */
+    /* Generate collection helper functions (retain/release wrappers, hashcode, equals) */
     gen_collection_helpers(ctx);
 
     /* Collect string literals and emit static structs */

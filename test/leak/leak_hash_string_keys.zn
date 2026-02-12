@@ -1,0 +1,8 @@
+func main() {
+    var i = 0
+    while i < 100000 {
+        var h = ["key": "val", "foo": "bar"]
+        i = i + 1
+    }
+    0
+}
