@@ -24,12 +24,16 @@ typedef enum {
     TK_BOOL,
     TK_CHAR,
     TK_VOID,
+    TK_STRUCT,
 } TypeKind;
 
-/* Resolved type representation — used by semantic analysis and codegen. */
+/* Resolved type representation — used by semantic analysis and codegen.
+   TypeInfo (below) is the parser-side type specification; Type is what the
+   compiler resolved.  Semantic analysis converts TypeInfo -> Type. */
 typedef struct Type {
     TypeKind kind;
     int is_optional;
+    char *name;           /* struct canonical name */
 } Type;
 
 /* Type helpers */
@@ -42,7 +46,11 @@ int type_eq(const Type *a, const Type *b);
 typedef struct TypeInfo {
     TypeKind kind;
     int is_optional;        /* 1 if T?, 0 otherwise */
+    char *name;             /* struct name, NULL for non-struct types */
 } TypeInfo;
+
+Type *type_from_info(TypeInfo *ti);
+void free_type_info(TypeInfo *ti);
 
 typedef enum {
     NODE_PROGRAM,
@@ -71,6 +79,10 @@ typedef enum {
     NODE_FIELD_ACCESS,
     NODE_INDEX,
     NODE_OPTIONAL_CHECK,
+    NODE_TYPE_DEF,
+    NODE_STRUCT_FIELD,
+
+    NODE_NAMED_ARG,
 } NodeType;
 
 typedef struct ASTNode ASTNode;
@@ -109,13 +121,16 @@ struct ASTNode {
         struct { ASTNode *cond; ASTNode *body; } while_expr;
         struct { ASTNode *init; ASTNode *cond; ASTNode *update; ASTNode *body; } for_expr;
         struct { char *name; NodeList *params; TypeInfo *return_type; ASTNode *body; } func_def;
-        struct { char *name; NodeList *args; } call;
+        struct { char *name; NodeList *args; int is_struct_init; } call;
         struct { ASTNode *value; } ret;
         struct { ASTNode *value; } break_expr;
         struct { ASTNode *value; } continue_expr;
         struct { ASTNode *object; char *field; } field_access;
         struct { ASTNode *object; ASTNode *index; } index_access;
         struct { ASTNode *operand; } optional_check;
+        struct { char *name; NodeList *fields; int is_class; } type_def;
+        struct { char *name; TypeInfo *type_info; ASTNode *default_value; int is_const; } struct_field;
+        struct { char *name; ASTNode *value; } named_arg;
     } data;
 };
 
@@ -150,6 +165,12 @@ ASTNode *make_return(ASTNode *value);
 ASTNode *make_field_access(ASTNode *object, char *field);
 ASTNode *make_index_access(ASTNode *object, ASTNode *index);
 ASTNode *make_optional_check(ASTNode *operand);
+ASTNode *make_type_def(char *name, NodeList *fields, int is_class);
+ASTNode *make_struct_field(char *name, TypeInfo *type_info, ASTNode *default_value, int is_const);
+ASTNode *make_named_arg(char *name, ASTNode *value);
+
+/* Struct type info helper */
+TypeInfo *make_struct_type_info(char *name);
 
 /* List utilities — O(1) append via tail pointer */
 NodeList *make_list(ASTNode *node);
@@ -159,7 +180,6 @@ NodeList *list_append(NodeList *list, ASTNode *node);
 void print_ast(ASTNode *node, int indent);
 
 /* Cleanup */
-void free_type_info(TypeInfo *ti);
 void free_ast(ASTNode *node);
 void free_list(NodeList *list);
 

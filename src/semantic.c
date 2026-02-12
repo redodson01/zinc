@@ -80,6 +80,29 @@ Symbol *lookup(SemanticContext *ctx, const char *name) {
     return NULL;
 }
 
+/* Hash function for struct names (djb2) */
+static unsigned int hash_struct_name(const char *name) {
+    unsigned int h = 5381;
+    for (const char *p = name; *p; p++)
+        h = ((h << 5) + h) ^ (unsigned char)*p;
+    return h % STRUCT_BUCKETS;
+}
+
+StructDef *lookup_struct(SemanticContext *ctx, const char *name) {
+    unsigned int idx = hash_struct_name(name);
+    for (StructDef *s = ctx->struct_buckets[idx]; s; s = s->next) {
+        if (strcmp(s->name, name) == 0) return s;
+    }
+    return NULL;
+}
+
+static StructFieldDef *lookup_struct_field(StructDef *sd, const char *name) {
+    for (StructFieldDef *f = sd->fields; f; f = f->next) {
+        if (strcmp(f->name, name) == 0) return f;
+    }
+    return NULL;
+}
+
 static Symbol *add_symbol(SemanticContext *ctx, int line, const char *name,
                            Type *type, int is_const) {
     if (lookup_local(ctx->current_scope, name)) {
@@ -98,7 +121,7 @@ static Symbol *add_symbol(SemanticContext *ctx, int line, const char *name,
 
 static Symbol *add_function(SemanticContext *ctx, int line, const char *name,
                              Type *return_type, int param_count,
-                             Type **param_types) {
+                             Type **param_types, int is_extern) {
     if (lookup_local(ctx->current_scope, name)) {
         semantic_errorf(ctx, line, "function '%s' already declared in this scope", name);
         return NULL;
@@ -107,6 +130,7 @@ static Symbol *add_function(SemanticContext *ctx, int line, const char *name,
     sym->name = strdup(name);
     sym->type = type_clone(return_type);
     sym->is_function = 1;
+    sym->is_extern = is_extern;
     sym->param_count = param_count;
     if (param_count > 0) {
         sym->param_types = malloc(param_count * sizeof(Type*));
@@ -129,7 +153,7 @@ static int is_always_true(ASTNode *expr) {
     if (!expr) return 0;
     /* Direct `true` literal */
     if (expr->type == NODE_BOOL && expr->data.bval) return 1;
-    /* `!false` — produced by `until false` -> `while (!false)` */
+    /* `!false` -- produced by `until false` -> `while (!false)` */
     if (expr->type == NODE_UNARYOP && expr->data.unaryop.op == OP_NOT) {
         ASTNode *inner = expr->data.unaryop.operand;
         if (inner && inner->type == NODE_BOOL && !inner->data.bval) return 1;
@@ -146,13 +170,14 @@ static const char *type_kind_name(TypeKind t) {
     case TK_BOOL:   return "bool";
     case TK_CHAR:   return "char";
     case TK_VOID:   return "void";
+    case TK_STRUCT: return "struct";
     default:        return "unknown";
     }
 }
 
-/* Type inference — sets resolved_type on nodes */
+/* Type inference -- sets resolved_type on nodes */
 Type *get_expr_type(SemanticContext *ctx, ASTNode *expr) {
-    static Type void_type = {TK_VOID, 0};
+    static Type void_type = {TK_VOID, 0, NULL};
     if (!expr) return &void_type;
 
     /* Return cached type if already resolved */
@@ -177,7 +202,7 @@ Type *get_expr_type(SemanticContext *ctx, ASTNode *expr) {
         } else {
             type_free(expr->resolved_type);
             expr->resolved_type = type_clone(sym->type);
-            return expr->resolved_type;
+            return expr->resolved_type;  /* already set resolved_type */
         }
         break;
     }
@@ -291,14 +316,41 @@ Type *get_expr_type(SemanticContext *ctx, ASTNode *expr) {
 }
 
 /* Validate that an expression is a legal assignment target.
-   Reports errors for undefined variables, constants, and non-lvalues. */
-static void check_lvalue(SemanticContext *ctx, ASTNode *tgt, int line, const char *verb) {
+   Reports errors for undefined variables, constants, and non-lvalues.
+   Returns the StructFieldDef if the target is a struct field access, NULL otherwise. */
+static StructFieldDef *check_lvalue(SemanticContext *ctx, ASTNode *tgt, int line, const char *verb) {
     if (tgt->type == NODE_IDENT) {
         Symbol *sym = lookup(ctx, tgt->data.ident.name);
         if (!sym) {
             semantic_errorf(ctx, line, "undefined variable '%s'", tgt->data.ident.name);
         } else if (sym->is_const) {
             semantic_errorf(ctx, line, "cannot %s constant '%s'", verb, tgt->data.ident.name);
+        }
+    } else if (tgt->type == NODE_FIELD_ACCESS) {
+        ASTNode *obj = tgt->data.field_access.object;
+        TypeKind obj_kind = obj->resolved_type ? obj->resolved_type->kind : TK_UNKNOWN;
+        const char *obj_sn = obj->resolved_type ? obj->resolved_type->name : NULL;
+        if (obj_kind == TK_STRUCT && obj_sn) {
+            StructDef *fsd = lookup_struct(ctx, obj_sn);
+            if (fsd) {
+                StructFieldDef *fd = lookup_struct_field(fsd, tgt->data.field_access.field);
+                if (fd && fd->is_const)
+                    semantic_errorf(ctx, line, "cannot %s immutable field '%s'",
+                                    verb, tgt->data.field_access.field);
+                if (fd) {
+                    /* Binding immutability for value types */
+                    ASTNode *cur = obj;
+                    while (cur->type == NODE_FIELD_ACCESS)
+                        cur = cur->data.field_access.object;
+                    if (cur->type == NODE_IDENT) {
+                        Symbol *sym = lookup(ctx, cur->data.ident.name);
+                        if (sym && sym->is_const)
+                            semantic_errorf(ctx, line, "cannot modify field of immutable variable '%s'",
+                                            cur->data.ident.name);
+                    }
+                }
+                return fd;
+            }
         }
     } else if (tgt->type == NODE_INDEX) {
         TypeKind obj_type = tgt->data.index_access.object->resolved_type
@@ -309,6 +361,7 @@ static void check_lvalue(SemanticContext *ctx, ASTNode *tgt, int line, const cha
     } else {
         semantic_errorf(ctx, line, "invalid assignment target");
     }
+    return NULL;
 }
 
 static void analyze_expr(SemanticContext *ctx, ASTNode *expr) {
@@ -333,7 +386,11 @@ static void analyze_expr(SemanticContext *ctx, ASTNode *expr) {
     case NODE_ASSIGN: {
         analyze_expr(ctx, expr->data.assign.target);
         analyze_expr(ctx, expr->data.assign.value);
-        check_lvalue(ctx, expr->data.assign.target, expr->line, "assign to");
+        StructFieldDef *fd = check_lvalue(ctx, expr->data.assign.target, expr->line, "assign to");
+        if (fd) {
+            type_free(expr->resolved_type);
+            expr->resolved_type = type_clone(fd->type);
+        }
         break;
     }
     case NODE_COMPOUND_ASSIGN: {
@@ -349,6 +406,54 @@ static void analyze_expr(SemanticContext *ctx, ASTNode *expr) {
     }
     case NODE_CALL: {
         const char *name = expr->data.call.name;
+        Symbol *sym = lookup(ctx, name);
+
+        /* Check if this is a struct instantiation */
+        StructDef *sd = lookup_struct(ctx, name);
+        if (sd) {
+            expr->data.call.is_struct_init = 1;
+
+            /* Validate named args match struct fields */
+            for (NodeList *arg = expr->data.call.args; arg; arg = arg->next) {
+                ASTNode *a = arg->node;
+                if (a->type == NODE_NAMED_ARG) {
+                    StructFieldDef *fd = lookup_struct_field(sd, a->data.named_arg.name);
+                    if (!fd) {
+                        semantic_errorf(ctx, expr->line, "struct '%s' has no field '%s'",
+                                        name, a->data.named_arg.name);
+                    }
+                    analyze_expr(ctx, a->data.named_arg.value);
+                    get_expr_type(ctx, a->data.named_arg.value);
+                } else {
+                    semantic_errorf(ctx, expr->line, "struct '%s' requires named arguments", name);
+                    analyze_expr(ctx, a);
+                    get_expr_type(ctx, a);
+                }
+            }
+
+            /* Check that all required fields (without defaults) are provided. */
+            for (StructFieldDef *fd = sd->fields; fd; fd = fd->next) {
+                if (!fd->has_default) {
+                    int found = 0;
+                    for (NodeList *arg = expr->data.call.args; arg; arg = arg->next) {
+                        if (arg->node->type == NODE_NAMED_ARG &&
+                            strcmp(arg->node->data.named_arg.name, fd->name) == 0) {
+                            found = 1;
+                            break;
+                        }
+                    }
+                    if (!found) {
+                        semantic_errorf(ctx, expr->line,
+                            "missing required field '%s' for struct '%s'", fd->name, name);
+                    }
+                }
+            }
+
+            if (!expr->resolved_type) expr->resolved_type = type_new(TK_STRUCT);
+            else expr->resolved_type->kind = TK_STRUCT;
+            expr->resolved_type->name = strdup(name);
+            break;
+        }
 
         /* Built-in print function */
         if (strcmp(name, "print") == 0) {
@@ -372,7 +477,6 @@ static void analyze_expr(SemanticContext *ctx, ASTNode *expr) {
             break;
         }
 
-        Symbol *sym = lookup(ctx, name);
         if (!sym) {
             semantic_errorf(ctx, expr->line, "undefined function '%s'", name);
         } else if (!sym->is_function) {
@@ -428,7 +532,29 @@ static void analyze_expr(SemanticContext *ctx, ASTNode *expr) {
             break;
         }
 
-        semantic_errorf(ctx, expr->line, "field access on non-struct type");
+        /* Struct field access */
+        const char *obj_struct_name = (obj->resolved_type) ? obj->resolved_type->name : NULL;
+        if (obj_kind != TK_STRUCT || !obj_struct_name) {
+            if (obj_kind != TK_UNKNOWN)
+                semantic_errorf(ctx, expr->line, "field access on non-struct type");
+            break;
+        }
+
+        StructDef *sd = lookup_struct(ctx, obj_struct_name);
+        if (!sd) {
+            semantic_errorf(ctx, expr->line, "undefined struct type '%s'", obj_struct_name);
+            break;
+        }
+
+        StructFieldDef *fd = lookup_struct_field(sd, field);
+        if (!fd) {
+            semantic_errorf(ctx, expr->line, "struct '%s' has no field '%s'",
+                            obj_struct_name, field);
+            break;
+        }
+
+        type_free(expr->resolved_type);
+        expr->resolved_type = type_clone(fd->type);
         break;
     }
     case NODE_INDEX: {
@@ -447,6 +573,10 @@ static void analyze_expr(SemanticContext *ctx, ASTNode *expr) {
         }
         break;
     }
+    case NODE_NAMED_ARG:
+        analyze_expr(ctx, expr->data.named_arg.value);
+        get_expr_type(ctx, expr->data.named_arg.value);
+        break;
     case NODE_OPTIONAL_CHECK: {
         analyze_expr(ctx, expr->data.optional_check.operand);
         ASTNode *operand = expr->data.optional_check.operand;
@@ -558,6 +688,14 @@ static void analyze_stmt(SemanticContext *ctx, ASTNode *node) {
                 if (!node->resolved_type) node->resolved_type = type_new(then_t);
                 else node->resolved_type->kind = then_t;
                 if (is_ref_type(then_t)) node->is_fresh_alloc = 1;
+                /* Propagate struct name for struct-typed if/else */
+                if (then_t == TK_STRUCT && then_b->type == NODE_BLOCK && then_b->data.block.stmts) {
+                    NodeList *tl = then_b->data.block.stmts;
+                    while (tl->next) tl = tl->next;
+                    if (tl->node && tl->node->resolved_type && tl->node->resolved_type->name) {
+                        node->resolved_type->name = strdup(tl->node->resolved_type->name);
+                    }
+                }
             }
         } else {
             /* If without else -> optional type */
@@ -667,6 +805,70 @@ static void analyze_stmt(SemanticContext *ctx, ASTNode *node) {
             }
         }
         break;
+    case NODE_TYPE_DEF: {
+        const char *def_name = node->data.type_def.name;
+        if (lookup_struct(ctx, def_name)) {
+            semantic_errorf(ctx, node->line, "struct '%s' already defined", def_name);
+            break;
+        }
+        StructDef *sd = calloc(1, sizeof(StructDef));
+        sd->name = strdup(def_name);
+        sd->is_class = 0;
+        unsigned int si = hash_struct_name(def_name);
+        sd->next = ctx->struct_buckets[si];
+        ctx->struct_buckets[si] = sd;
+
+        int field_count = 0;
+        StructFieldDef *fields_head = NULL;
+        StructFieldDef *fields_tail = NULL;
+
+        for (NodeList *f = node->data.type_def.fields; f; f = f->next) {
+            ASTNode *field = f->node;
+
+            /* Check for duplicate fields */
+            for (StructFieldDef *existing = fields_head; existing; existing = existing->next) {
+                if (strcmp(existing->name, field->data.struct_field.name) == 0) {
+                    semantic_errorf(ctx, field->line, "duplicate field '%s' in struct '%s'",
+                                    field->data.struct_field.name, def_name);
+                }
+            }
+
+            StructFieldDef *fd = calloc(1, sizeof(StructFieldDef));
+            fd->name = strdup(field->data.struct_field.name);
+            fd->is_const = field->data.struct_field.is_const;
+
+            if (field->data.struct_field.type_info) {
+                TypeInfo *fti = field->data.struct_field.type_info;
+                const char *sn = fti->name;
+                if (sn) {
+                    StructDef *fsd = lookup_struct(ctx, sn);
+                    if (!fsd) {
+                        semantic_errorf(ctx, field->line, "undefined type '%s'", sn);
+                    }
+                }
+                fd->type = type_from_info(fti);
+                fd->has_default = 0;
+            } else if (field->data.struct_field.default_value) {
+                analyze_expr(ctx, field->data.struct_field.default_value);
+                TypeKind tk = get_expr_type(ctx, field->data.struct_field.default_value)->kind;
+                fd->type = type_new(tk);
+                fd->has_default = 1;
+                fd->default_value = field->data.struct_field.default_value;
+            }
+
+            if (fields_tail) {
+                fields_tail->next = fd;
+            } else {
+                fields_head = fd;
+            }
+            fields_tail = fd;
+            field_count++;
+        }
+
+        sd->fields = fields_head;
+        sd->field_count = field_count;
+        break;
+    }
     case NODE_FUNC_DEF: {
         /* Collect parameter types */
         int param_count = 0;
@@ -678,29 +880,18 @@ static void analyze_stmt(SemanticContext *ctx, ASTNode *node) {
             param_types = malloc(param_count * sizeof(Type*));
             int i = 0;
             for (NodeList *p = node->data.func_def.params; p; p = p->next, i++) {
-                param_types[i] = type_new(p->node->data.param.type_info->kind);
+                param_types[i] = type_from_info(p->node->data.param.type_info);
             }
         }
 
         /* Add function to current scope (before body for recursion) */
         Type void_type = { .kind = TK_VOID };
         Symbol *func_sym = add_function(ctx, node->line, node->data.func_def.name,
-                                         &void_type, param_count, param_types);
+                                         &void_type, param_count, param_types, 0);
         if (param_types) {
             for (int i = 0; i < param_count; i++)
                 type_free(param_types[i]);
             free(param_types);
-        }
-
-        /* Store param types on function symbol (with is_optional) */
-        if (func_sym && param_count > 0) {
-            int i = 0;
-            for (NodeList *p = node->data.func_def.params; p; p = p->next, i++) {
-                TypeInfo *ti = p->node->data.param.type_info;
-                type_free(func_sym->param_types[i]);
-                func_sym->param_types[i] = type_new(ti->kind);
-                func_sym->param_types[i]->is_optional = ti->is_optional;
-            }
         }
 
         /* Analyze function body in new scope */
@@ -709,8 +900,7 @@ static void analyze_stmt(SemanticContext *ctx, ASTNode *node) {
         /* Add parameters to function scope (const by default) */
         for (NodeList *p = node->data.func_def.params; p; p = p->next) {
             TypeInfo *ti = p->node->data.param.type_info;
-            Type *ptype = type_new(ti->kind);
-            ptype->is_optional = ti->is_optional;
+            Type *ptype = type_from_info(ti);
             add_symbol(ctx, p->node->line, p->node->data.param.name, ptype, 1);
             type_free(ptype);
         }
@@ -787,6 +977,23 @@ SemanticContext *semantic_init(void) {
 void semantic_free(SemanticContext *ctx) {
     while (ctx->current_scope) {
         pop_scope(ctx);
+    }
+    for (int i = 0; i < STRUCT_BUCKETS; i++) {
+        StructDef *sd = ctx->struct_buckets[i];
+        while (sd) {
+            StructDef *next = sd->next;
+            StructFieldDef *fd = sd->fields;
+            while (fd) {
+                StructFieldDef *fnext = fd->next;
+                free(fd->name);
+                type_free(fd->type);
+                free(fd);
+                fd = fnext;
+            }
+            free(sd->name);
+            free(sd);
+            sd = next;
+        }
     }
     type_free(ctx->current_func_return_type);
     type_free(ctx->loop_result_type);

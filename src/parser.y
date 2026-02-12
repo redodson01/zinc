@@ -49,7 +49,7 @@
 %token IF UNLESS ELSE
 %token WHILE UNTIL FOR
 %token BREAK CONTINUE
-%token FUNC RETURN
+%token FUNC RETURN STRUCT
 %token EQ NE LE GE AND OR
 %token PLUS_ASSIGN MINUS_ASSIGN STAR_ASSIGN SLASH_ASSIGN PERCENT_ASSIGN
 %token INCREMENT DECREMENT
@@ -60,8 +60,9 @@
 %type <node> program expr primary block interp_string
 %type <node> if_expr unless_expr while_expr until_expr for_expr
 %type <node> func_def param for_init for_update
+%type <node> struct_def struct_field arg_or_named
 %type <node> interp_parts
-%type <list> top_level_list expr_list param_list arg_list
+%type <list> top_level_list expr_list param_list arg_list struct_field_list
 
 %type <type> type_spec
 
@@ -84,8 +85,10 @@ program:
     ;
 
 top_level_list:
-    func_def                    { $$ = make_list($1); }
-    | top_level_list func_def   { $$ = list_append($1, $2); }
+    func_def                        { $$ = make_list($1); }
+    | struct_def                    { $$ = make_list($1); }
+    | top_level_list func_def       { $$ = list_append($1, $2); }
+    | top_level_list struct_def     { $$ = list_append($1, $2); }
     ;
 
 func_def:
@@ -109,6 +112,7 @@ type_spec:
     | TYPE_STRING                       { $$ = make_type_info(TK_STRING); }
     | TYPE_BOOL                         { $$ = make_type_info(TK_BOOL); }
     | TYPE_CHAR                         { $$ = make_type_info(TK_CHAR); }
+    | IDENTIFIER                        { $$ = make_struct_type_info($1); }
     | type_spec QUESTION                { $$ = make_optional_type($1); }
     ;
 
@@ -225,10 +229,37 @@ for_update:
     | IDENTIFIER DECREMENT              { $$ = make_incdec(make_ident($1), OP_DEC, 0); $$->line = @1.first_line; }
     ;
 
+/* Struct definition */
+struct_def:
+    STRUCT IDENTIFIER LBRACE struct_field_list RBRACE
+        { $$ = make_type_def($2, $4, 0); $$->line = @1.first_line; }
+    ;
+
+struct_field_list:
+    struct_field                        { $$ = make_list($1); }
+    | struct_field_list struct_field    { $$ = list_append($1, $2); }
+    ;
+
+struct_field:
+    LET IDENTIFIER COLON type_spec
+        { $$ = make_struct_field($2, $4, NULL, 1); $$->line = @1.first_line; }
+    | VAR IDENTIFIER COLON type_spec
+        { $$ = make_struct_field($2, $4, NULL, 0); $$->line = @1.first_line; }
+    | LET IDENTIFIER ASSIGN expr
+        { $$ = make_struct_field($2, NULL, $4, 1); $$->line = @1.first_line; }
+    | VAR IDENTIFIER ASSIGN expr
+        { $$ = make_struct_field($2, NULL, $4, 0); $$->line = @1.first_line; }
+    ;
+
 arg_list:
     /* empty */                         { $$ = NULL; }
-    | expr                              { $$ = make_list($1); }
-    | arg_list COMMA expr               { $$ = list_append($1, $3); }
+    | arg_or_named                      { $$ = make_list($1); }
+    | arg_list COMMA arg_or_named       { $$ = list_append($1, $3); }
+    ;
+
+arg_or_named:
+    expr                                { $$ = $1; }
+    | IDENTIFIER COLON expr             { $$ = make_named_arg($1, $3); }
     ;
 
 primary:

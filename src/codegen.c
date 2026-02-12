@@ -3,10 +3,13 @@
  *
  * Expression-oriented control flow uses GCC statement expressions ({ ... })
  * so that `if`, `while`, and `for` can appear in value positions.
+ * This is a conscious design tradeoff: it ties the generated C to GCC/Clang
+ * but keeps the codegen simple and the generated code readable. (#8)
  *
- * Split into two files:
- *   codegen.c      — shared infrastructure, emit helpers, ARC scope, generate()
- *   codegen_expr.c — expression/statement generation, function emission
+ * Split into three files:
+ *   codegen.c       -- shared infrastructure, emit helpers, ARC scope, generate()
+ *   codegen_types.c -- struct layout emission
+ *   codegen_expr.c  -- expression/statement generation, function emission
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -53,6 +56,7 @@ const char *type_to_c(TypeKind t) {
     case TK_BOOL:   return "bool";
     case TK_CHAR:   return "char";
     case TK_VOID:   return "void";
+    case TK_STRUCT: return "/* struct */";
     default:        return "int64_t";
     }
 }
@@ -68,7 +72,7 @@ const char *opt_type_for(TypeKind t) {
 }
 
 int is_ref_type(TypeKind t) {
-    return t == TK_STRING;
+    return (t == TK_STRING);
 }
 
 int expr_is_string(ASTNode *expr) {
@@ -106,19 +110,54 @@ void cg_scope_add_ref(CodegenContext *ctx, const char *name, const char *type_na
     ctx->scope->ref_vars = v;
 }
 
+void cg_scope_add_value_type(CodegenContext *ctx, const char *name, const char *struct_name) {
+    CGScopeVar *v = calloc(1, sizeof(CGScopeVar));
+    v->name = strdup(name);
+    v->type_name = strdup(struct_name);
+    v->is_value_type = 1;
+    v->next = ctx->scope->ref_vars;
+    ctx->scope->ref_vars = v;
+}
+
+static void emit_value_type_field_releases(CodegenContext *ctx, const char *prefix, StructDef *sd) {
+    for (StructFieldDef *fd = sd->fields; fd; fd = fd->next) {
+        Type *ft = fd->type;
+        if (!ft) continue;
+        if (ft->kind == TK_STRING) {
+            cg_emit_indent(ctx);
+            cg_emitf(ctx, "__zn_str_release(%s.%s);\n", prefix, fd->name);
+        } else if (ft->kind == TK_STRUCT && ft->name) {
+            StructDef *inner = lookup_struct(ctx->sem_ctx, ft->name);
+            if (inner) {
+                char nested[256];
+                snprintf(nested, sizeof(nested), "%s.%s", prefix, fd->name);
+                emit_value_type_field_releases(ctx, nested, inner);
+            }
+        }
+    }
+}
+
+void emit_var_release(CodegenContext *ctx, CGScopeVar *v) {
+    if (v->is_value_type) {
+        StructDef *sd = lookup_struct(ctx->sem_ctx, v->type_name);
+        if (sd) emit_value_type_field_releases(ctx, v->name, sd);
+    } else {
+        cg_emit_indent(ctx);
+        cg_emitf(ctx, "__%s_release(%s);\n", v->type_name, v->name);
+    }
+}
+
 void emit_scope_releases(CodegenContext *ctx) {
     if (!ctx->scope) return;
     for (CGScopeVar *v = ctx->scope->ref_vars; v; v = v->next) {
-        cg_emit_indent(ctx);
-        cg_emitf(ctx, "__%s_release(%s);\n", v->type_name, v->name);
+        emit_var_release(ctx, v);
     }
 }
 
 void emit_all_scope_releases(CodegenContext *ctx) {
     for (CGScope *s = ctx->scope; s; s = s->parent) {
         for (CGScopeVar *v = s->ref_vars; v; v = v->next) {
-            cg_emit_indent(ctx);
-            cg_emitf(ctx, "__%s_release(%s);\n", v->type_name, v->name);
+            emit_var_release(ctx, v);
         }
     }
 }
@@ -206,7 +245,7 @@ static void emit_c_string_escaped(FILE *f, const char *s) {
     }
 }
 
-/* --- AST walker for string literal collection --- */
+/* --- AST walker for string literal collection (#6) --- */
 
 typedef void (*ASTVisitor)(ASTNode *node, void *data);
 
@@ -256,6 +295,11 @@ static void ast_walk(ASTNode *node, ASTVisitor visitor, void *data) {
     case NODE_BREAK:    ast_walk(node->data.break_expr.value, visitor, data); break;
     case NODE_CONTINUE: ast_walk(node->data.continue_expr.value, visitor, data); break;
     case NODE_FIELD_ACCESS: ast_walk(node->data.field_access.object, visitor, data); break;
+    case NODE_TYPE_DEF: ast_walk_list(node->data.type_def.fields, visitor, data); break;
+    case NODE_STRUCT_FIELD:
+        ast_walk(node->data.struct_field.default_value, visitor, data);
+        break;
+    case NODE_NAMED_ARG: ast_walk(node->data.named_arg.value, visitor, data); break;
     case NODE_INDEX:
         ast_walk(node->data.index_access.object, visitor, data);
         ast_walk(node->data.index_access.index, visitor, data);
@@ -273,7 +317,7 @@ static void ast_walk_list(NodeList *list, ASTVisitor visitor, void *data) {
     }
 }
 
-/* String literal visitor — assigns codegen-side IDs and emits static structs */
+/* String literal visitor -- assigns codegen-side IDs and emits static structs (#3, #6) */
 static void string_literal_visitor(ASTNode *node, void *data) {
     if (node->type != NODE_STRING) return;
     CodegenContext *ctx = data;
@@ -319,6 +363,13 @@ void generate(CodegenContext *ctx, ASTNode *root) {
     cg_emit(ctx, "#include <inttypes.h>\n");
     cg_emit(ctx, "#include <stdbool.h>\n");
     fprintf(ctx->c_file, "#include \"%s.h\"\n\n", base);
+
+    /* Generate struct typedefs (to header) */
+    for (NodeList *s = root->data.program.stmts; s; s = s->next) {
+        if (s->node && s->node->type == NODE_TYPE_DEF && !s->node->data.type_def.is_class) {
+            gen_struct_def(ctx, s->node);
+        }
+    }
 
     /* Collect string literals and emit static structs */
     collect_string_literals(ctx, root);

@@ -1,0 +1,6 @@
+# ERRORS: 1
+# Struct field with undefined type
+struct Foo {
+    var bar: NonExistent
+}
+func main() { 0 }

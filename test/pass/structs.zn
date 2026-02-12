@@ -1,0 +1,85 @@
+# Struct tests
+
+# Basic struct definition
+struct Point {
+    var x: int
+    var y: int
+}
+
+# Struct with let fields
+struct Color {
+    let red: int
+    let green: int
+    let blue: int
+}
+
+# Struct with defaults
+struct Config {
+    var width: int
+    var height: int
+    var debug = false
+}
+
+# Struct with mixed let/var and defaults
+struct Window {
+    let title: String
+    var width: int
+    var height: int
+    var visible = true
+}
+
+# Nested struct
+struct Rect {
+    var origin: Point
+    var size: Point
+}
+
+# Function that takes struct param
+func point_sum(p: Point) {
+    p.x + p.y
+}
+
+# Function that returns struct
+func make_point(x: int, y: int) {
+    Point(x: x, y: y)
+}
+
+func main() {
+    # Basic struct creation
+    var p = Point(x: 10, y: 20)
+    var sum = p.x + p.y
+
+    # Struct mutation
+    p.x = 100
+    p.y = 200
+
+    # Immutable fields (read only)
+    let c = Color(red: 255, green: 128, blue: 0)
+    var r = c.red
+
+    # Defaults
+    var cfg = Config(width: 800, height: 600)
+    cfg.debug = true
+
+    # Mixed fields
+    var w = Window(title: "Hello", width: 640, height: 480)
+    w.width = 1024
+    w.height = 768
+    w.visible = false
+
+    # Nested struct
+    var rect = Rect(origin: Point(x: 0, y: 0), size: Point(x: 100, y: 50))
+    rect.origin.x = 10
+
+    # Struct as function parameter
+    var pt = Point(x: 3, y: 7)
+    let s = point_sum(pt)
+
+    # Struct as function return
+    var pt2 = make_point(42, 99)
+
+    # Struct in if-expression
+    var pt3 = if true { Point(x: 1, y: 2) } else { Point(x: 3, y: 4) }
+
+    0
+}

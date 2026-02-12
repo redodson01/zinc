@@ -1,0 +1,28 @@
+# ERRORS: 6
+# Tests: struct already defined, duplicate field, missing required field, requires named arguments
+
+struct Point {
+    var x: int
+    var y: int
+}
+
+# Error 1: struct already defined
+struct Point {
+    var a: int
+}
+
+# Error 2: duplicate field
+struct Bad {
+    var x: int
+    var x: int
+}
+
+func main() {
+    # Error 3: missing required field
+    var p = Point(x: 10)
+
+    # Errors 4-5: requires named arguments (one error per positional arg)
+    var q = Point(10)
+
+    0
+}

@@ -1,0 +1,15 @@
+# ERRORS: 2
+
+struct Color {
+    let red: int
+    let green: int
+    var blue: int
+}
+
+func main() {
+    var c = Color(red: 255, green: 128, blue: 0)
+    c.red = 100
+    c.green = 50
+    c.blue = 200
+    0
+}

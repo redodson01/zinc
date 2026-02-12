@@ -14,8 +14,8 @@ TEST_LEAK_DIR = test/leak
 
 all: $(BUILD_DIR)/zinc $(BUILD_DIR)/zinc_runtime.h
 
-$(BUILD_DIR)/zinc: $(BUILD_DIR)/parser.c $(BUILD_DIR)/scanner.c $(SRC_DIR)/ast.c $(SRC_DIR)/semantic.c $(SRC_DIR)/codegen.c $(SRC_DIR)/codegen_expr.c $(SRC_DIR)/main.c
-	$(CC) $(CFLAGS) -I$(SRC_DIR) -I$(BUILD_DIR) -o $@ $(BUILD_DIR)/parser.c $(BUILD_DIR)/scanner.c $(SRC_DIR)/ast.c $(SRC_DIR)/semantic.c $(SRC_DIR)/codegen.c $(SRC_DIR)/codegen_expr.c $(SRC_DIR)/main.c
+$(BUILD_DIR)/zinc: $(BUILD_DIR)/parser.c $(BUILD_DIR)/scanner.c $(SRC_DIR)/ast.c $(SRC_DIR)/semantic.c $(SRC_DIR)/codegen.c $(SRC_DIR)/codegen_expr.c $(SRC_DIR)/codegen_types.c $(SRC_DIR)/main.c
+	$(CC) $(CFLAGS) -I$(SRC_DIR) -I$(BUILD_DIR) -o $@ $(BUILD_DIR)/parser.c $(BUILD_DIR)/scanner.c $(SRC_DIR)/ast.c $(SRC_DIR)/semantic.c $(SRC_DIR)/codegen.c $(SRC_DIR)/codegen_expr.c $(SRC_DIR)/codegen_types.c $(SRC_DIR)/main.c
 
 $(BUILD_DIR)/parser.c $(BUILD_DIR)/parser.h: $(SRC_DIR)/parser.y | $(BUILD_DIR)
 	$(BISON) -d -v -o $(BUILD_DIR)/parser.c $(SRC_DIR)/parser.y

@@ -333,6 +333,88 @@ let val2 = until false {
 }                        # type: int (not optional)
 ```
 
+### Structs
+
+Structs are value types with named fields. Each field can be independently declared as `var` (mutable) or `let` (immutable).
+
+```
+struct Point {
+    var x: int
+    var y: int
+}
+
+struct Color {
+    let red: int
+    let green: int
+    let blue: int
+}
+```
+
+**Creating instances** uses named arguments:
+
+```
+var p = Point(x: 10, y: 20)
+let c = Color(red: 255, green: 128, blue: 0)
+```
+
+**Field access** uses dot notation:
+
+```
+let sum = p.x + p.y
+```
+
+**Field mutation** respects both field-level and binding-level immutability:
+
+```
+p.x = 100        # OK — var field on var binding
+# c.red = 50     # Error — let field
+# let q = Point(x: 1, y: 2)
+# q.x = 10       # Error — var field but let binding (value type)
+```
+
+For value types like structs, a `let` binding makes the entire value immutable — even `var` fields cannot be mutated through a `let` binding. This is because structs are copied by value, so mutating a `let` binding would modify the local copy.
+
+**Default values** can be provided for fields:
+
+```
+struct Config {
+    var width: int
+    var height: int
+    var debug = false
+}
+
+var cfg = Config(width: 800, height: 600)
+# cfg.debug is false (the default)
+```
+
+Fields without defaults are required when creating instances.
+
+**Nested structs:**
+
+```
+struct Rect {
+    var origin: Point
+    var size: Point
+}
+
+var r = Rect(origin: Point(x: 0, y: 0), size: Point(x: 100, y: 50))
+r.origin.x = 10
+```
+
+**Structs as function parameters and return values:**
+
+```
+func point_sum(p: Point) {
+    p.x + p.y
+}
+
+func make_point(x: int, y: int) {
+    Point(x: x, y: y)
+}
+```
+
+Parameters are passed by value (copied). Struct types are used in type annotations by name.
+
 ### Built-in Functions
 
 #### print
@@ -348,7 +430,7 @@ Takes exactly one `String` argument. Use string interpolation and escape sequenc
 
 ### Program Structure
 
-A Zinc program is a series of `func` definitions. Execution starts at `main`.
+A Zinc program is a series of `func` and `struct` definitions. Execution starts at `main`.
 
 ```
 func helper(x: int) {

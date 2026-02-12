@@ -9,6 +9,7 @@
 typedef struct CGScopeVar {
     char *name;
     char *type_name;   /* "zn_str" for strings */
+    int is_value_type; /* 1 for struct with ref-counted subfields */
     struct CGScopeVar *next;
 } CGScopeVar;
 
@@ -69,6 +70,8 @@ int expr_is_string(ASTNode *expr);
 void cg_push_scope(CodegenContext *ctx, int is_loop);
 void cg_pop_scope(CodegenContext *ctx);
 void cg_scope_add_ref(CodegenContext *ctx, const char *name, const char *type_name);
+void cg_scope_add_value_type(CodegenContext *ctx, const char *name, const char *struct_name);
+void emit_var_release(CodegenContext *ctx, CGScopeVar *v);
 void emit_scope_releases(CodegenContext *ctx);
 void emit_all_scope_releases(CodegenContext *ctx);
 void emit_retain_call(CodegenContext *ctx, const char *expr, Type *type);
@@ -91,5 +94,9 @@ void gen_stmts(CodegenContext *ctx, NodeList *stmts);
 void gen_func_proto(CodegenContext *ctx, ASTNode *func, int to_header);
 void gen_func_body(CodegenContext *ctx, ASTNode *block, TypeKind ret_type);
 void gen_func_def(CodegenContext *ctx, ASTNode *func);
+
+/* --- Type layout emission (codegen_types.c) --- */
+
+void gen_struct_def(CodegenContext *ctx, ASTNode *node);
 
 #endif

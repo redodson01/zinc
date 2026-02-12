@@ -46,11 +46,13 @@ Type *type_clone(const Type *t) {
     Type *c = calloc(1, sizeof(Type));
     c->kind = t->kind;
     c->is_optional = t->is_optional;
+    c->name = t->name ? strdup(t->name) : NULL;
     return c;
 }
 
 void type_free(Type *t) {
     if (!t) return;
+    free(t->name);
     free(t);
 }
 
@@ -59,6 +61,10 @@ int type_eq(const Type *a, const Type *b) {
     if (!a || !b) return 0;
     if (a->kind != b->kind) return 0;
     if (a->is_optional != b->is_optional) return 0;
+    if (a->kind == TK_STRUCT) {
+        if (!a->name || !b->name) return a->name == b->name;
+        return strcmp(a->name, b->name) == 0;
+    }
     return 1;
 }
 
@@ -260,7 +266,53 @@ ASTNode *make_optional_check(ASTNode *operand) {
     return n;
 }
 
-/* O(1) list append using tail pointer */
+ASTNode *make_type_def(char *name, NodeList *fields, int is_class) {
+    ASTNode *n = alloc_node(NODE_TYPE_DEF);
+    n->data.type_def.name = name;
+    n->data.type_def.fields = fields;
+    n->data.type_def.is_class = is_class;
+    return n;
+}
+
+ASTNode *make_struct_field(char *name, TypeInfo *type_info, ASTNode *default_value, int is_const) {
+    ASTNode *n = alloc_node(NODE_STRUCT_FIELD);
+    n->data.struct_field.name = name;
+    n->data.struct_field.type_info = type_info;
+    n->data.struct_field.default_value = default_value;
+    n->data.struct_field.is_const = is_const;
+    return n;
+}
+
+ASTNode *make_named_arg(char *name, ASTNode *value) {
+    ASTNode *n = alloc_node(NODE_NAMED_ARG);
+    n->data.named_arg.name = name;
+    n->data.named_arg.value = value;
+    return n;
+}
+
+TypeInfo *make_struct_type_info(char *name) {
+    TypeInfo *t = calloc(1, sizeof(TypeInfo));
+    t->kind = TK_STRUCT;
+    t->name = name;
+    return t;
+}
+
+Type *type_from_info(TypeInfo *ti) {
+    if (!ti) return type_new(TK_UNKNOWN);
+    Type *t = type_new(ti->kind);
+    t->is_optional = ti->is_optional;
+    if (ti->name)
+        t->name = strdup(ti->name);
+    return t;
+}
+
+void free_type_info(TypeInfo *ti) {
+    if (!ti) return;
+    free(ti->name);
+    free(ti);
+}
+
+/* O(1) list append using tail pointer (#15) */
 NodeList *make_list(ASTNode *node) {
     NodeList *l = malloc(sizeof(NodeList));
     l->node = node;
@@ -292,6 +344,10 @@ static void print_type_info(TypeInfo *ti) {
     case TK_BOOL:   printf("bool"); break;
     case TK_CHAR:   printf("char"); break;
     case TK_VOID:   printf("void"); break;
+    case TK_STRUCT:
+        if (ti->name) printf("%s", ti->name);
+        else printf("struct");
+        break;
     default:        printf("unknown"); break;
     }
     if (ti->is_optional) printf("?");
@@ -442,12 +498,27 @@ void print_ast(ASTNode *node, int indent) {
         printf("OptionalCheck\n");
         print_ast(node->data.optional_check.operand, indent + 1);
         break;
+    case NODE_TYPE_DEF:
+        printf("StructDef: %s\n", node->data.type_def.name);
+        for (NodeList *l = node->data.type_def.fields; l; l = l->next)
+            print_ast(l->node, indent + 1);
+        break;
+    case NODE_STRUCT_FIELD:
+        printf("StructField: %s%s", node->data.struct_field.is_const ? "let " : "var ",
+               node->data.struct_field.name);
+        if (node->data.struct_field.type_info) {
+            printf(": ");
+            print_type_info(node->data.struct_field.type_info);
+        }
+        printf("\n");
+        if (node->data.struct_field.default_value)
+            print_ast(node->data.struct_field.default_value, indent + 1);
+        break;
+    case NODE_NAMED_ARG:
+        printf("NamedArg: %s\n", node->data.named_arg.name);
+        print_ast(node->data.named_arg.value, indent + 1);
+        break;
     }
-}
-
-void free_type_info(TypeInfo *ti) {
-    if (!ti) return;
-    free(ti);
 }
 
 void free_list(NodeList *list) {
@@ -531,6 +602,19 @@ void free_ast(ASTNode *node) {
         break;
     case NODE_OPTIONAL_CHECK:
         free_ast(node->data.optional_check.operand);
+        break;
+    case NODE_TYPE_DEF:
+        free(node->data.type_def.name);
+        free_list(node->data.type_def.fields);
+        break;
+    case NODE_STRUCT_FIELD:
+        free(node->data.struct_field.name);
+        free_type_info(node->data.struct_field.type_info);
+        free_ast(node->data.struct_field.default_value);
+        break;
+    case NODE_NAMED_ARG:
+        free(node->data.named_arg.name);
+        free_ast(node->data.named_arg.value);
         break;
     }
     type_free(node->resolved_type);
