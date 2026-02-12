@@ -1,0 +1,20 @@
+# ERRORS: 3
+
+# Error 1: weak on non-class field (primitive)
+class Bad1 {
+    weak var x: int
+}
+
+# Error 2: weak on String field (not a class)
+class Bad2 {
+    weak var s: String
+}
+
+# Error 3: weak in struct (not allowed)
+struct Bad3 {
+    weak var x: int
+}
+
+func main() {
+    0
+}

@@ -496,7 +496,26 @@ c.items = [4, 5, 6]    # old array released, new array retained
 
 **Memory management** is automatic. Objects are freed when their reference count reaches zero. No manual memory management is needed.
 
-> **Note:** ARC does not detect reference cycles. Avoid creating objects that reference each other in a cycle, as they will not be freed.
+**Weak references** break reference cycles with the `weak` keyword. A weak field stores a reference without incrementing the reference count, so it won't prevent deallocation:
+
+```
+class Node {
+    var value: int
+    weak var next: Node
+}
+
+var a = Node(value: 1)
+var b = Node(value: 2)
+a.next = b
+b.next = a    # weak — no retain, no cycle
+
+if b.next? {
+    # weak fields are nullable, use ? to check
+    var val = b.next.value
+}
+```
+
+Weak fields default to `nil` (NULL) when not provided. The `weak` keyword can only be used on class-typed fields inside class definitions. Use `?` to check whether a weak reference is non-null.
 
 ### Tuples
 

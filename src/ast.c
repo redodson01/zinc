@@ -366,6 +366,16 @@ ASTNode *make_struct_field(char *name, TypeInfo *type_info, ASTNode *default_val
     return n;
 }
 
+ASTNode *make_weak_struct_field(char *name, TypeInfo *type_info, int is_const) {
+    ASTNode *n = alloc_node(NODE_STRUCT_FIELD);
+    n->data.struct_field.name = name;
+    n->data.struct_field.type_info = type_info;
+    n->data.struct_field.default_value = NULL;
+    n->data.struct_field.is_const = is_const;
+    n->data.struct_field.is_weak = 1;
+    return n;
+}
+
 ASTNode *make_named_arg(char *name, ASTNode *value) {
     ASTNode *n = alloc_node(NODE_NAMED_ARG);
     n->data.named_arg.name = name;

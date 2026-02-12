@@ -170,7 +170,7 @@ static int is_always_true(ASTNode *expr) {
     if (!expr) return 0;
     /* Direct `true` literal */
     if (expr->type == NODE_BOOL && expr->data.bval) return 1;
-    /* `!false` — produced by `until false` -> `while (!false)` */
+    /* `!false` — produced by `until false` → `while (!false)` */
     if (expr->type == NODE_UNARYOP && expr->data.unaryop.op == OP_NOT) {
         ASTNode *inner = expr->data.unaryop.operand;
         if (inner && inner->type == NODE_BOOL && !inner->data.bval) return 1;
@@ -624,9 +624,10 @@ static void analyze_expr(SemanticContext *ctx, ASTNode *expr) {
                 }
             }
 
-            /* Check that all required fields (without defaults) are provided. */
+            /* Check that all required fields (without defaults) are provided.
+               Weak fields are implicitly optional (default to NULL). */
             for (StructFieldDef *fd = sd->fields; fd; fd = fd->next) {
-                if (!fd->has_default) {
+                if (!fd->has_default && !fd->is_weak) {
                     int found = 0;
                     for (NodeList *arg = expr->data.call.args; arg; arg = arg->next) {
                         if (arg->node->type == NODE_NAMED_ARG &&
@@ -856,7 +857,7 @@ static void analyze_expr(SemanticContext *ctx, ASTNode *expr) {
             }
         }
 
-        /* Find or register anonymous type (#5 -- shared pattern for tuples/objects) */
+        /* Find or register anonymous type (#5 — shared pattern for tuples/objects) */
         StructDef *sd = lookup_struct(ctx, canonical);
         if (!sd) {
             sd = calloc(1, sizeof(StructDef));
@@ -944,7 +945,7 @@ static void analyze_expr(SemanticContext *ctx, ASTNode *expr) {
         }
         char *type_name = strdup(buf);
 
-        /* Register anonymous class if not already present (#5 -- shared pattern) */
+        /* Register anonymous class if not already present (#5 — shared pattern) */
         StructDef *sd = lookup_struct(ctx, type_name);
         if (!sd) {
             sd = calloc(1, sizeof(StructDef));
@@ -1346,9 +1347,15 @@ static void analyze_stmt(SemanticContext *ctx, ASTNode *node) {
                 }
             }
 
+            /* Weak is not allowed in structs */
+            if (!is_class && field->data.struct_field.is_weak) {
+                semantic_errorf(ctx, field->line, "'weak' is only allowed in class definitions");
+            }
+
             StructFieldDef *fd = calloc(1, sizeof(StructFieldDef));
             fd->name = strdup(field->data.struct_field.name);
             fd->is_const = field->data.struct_field.is_const;
+            if (is_class) fd->is_weak = field->data.struct_field.is_weak;
 
             if (field->data.struct_field.type_info) {
                 resolve_type_info(ctx, field->data.struct_field.type_info);
@@ -1373,6 +1380,14 @@ static void analyze_stmt(SemanticContext *ctx, ASTNode *node) {
                 fd->type = type_new(tk);
                 fd->has_default = 1;
                 fd->default_value = field->data.struct_field.default_value;
+            }
+
+            /* Validate weak: only on class-typed fields */
+            if (fd->is_weak) {
+                int is_class_field = (fd->type && fd->type->kind == TK_CLASS);
+                if (!is_class_field) {
+                    semantic_errorf(ctx, field->line, "'weak' can only be used on class-typed fields");
+                }
             }
 
             if (fields_tail) {

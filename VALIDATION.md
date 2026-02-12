@@ -22,9 +22,9 @@ make clean && make && make test-all
 ```
 
 Expected output (current counts):
-- 25 pass tests, 40 fail tests → `Test Summary: 65 passed, 0 failed`
-- 25 transpiler tests → `Transpiler Summary: 25 passed, 0 failed`
-- 0 leak tests → `Leak Test Summary: 0 passed, 0 failed`
+- 26 pass tests, 43 fail tests → `Test Summary: 69 passed, 0 failed`
+- 26 transpiler tests → `Transpiler Summary: 26 passed, 0 failed`
+- 35 leak tests → `Leak Test Summary: 35 passed, 0 failed`
 
 **If it fails:** Add missing tests or fix the code. Never adjust `# ERRORS: N` annotations without understanding why the count changed.
 

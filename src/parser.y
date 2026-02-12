@@ -51,7 +51,7 @@
 %token IF UNLESS ELSE
 %token WHILE UNTIL FOR
 %token BREAK CONTINUE
-%token FUNC RETURN STRUCT CLASS EXTERN ARROW
+%token FUNC RETURN STRUCT CLASS EXTERN ARROW WEAK
 %token EQ NE LE GE AND OR
 %token PLUS_ASSIGN MINUS_ASSIGN STAR_ASSIGN SLASH_ASSIGN PERCENT_ASSIGN
 %token INCREMENT DECREMENT
@@ -339,6 +339,10 @@ struct_field:
         { $$ = make_struct_field($2, NULL, $4, 1); $$->line = @1.first_line; }
     | VAR IDENTIFIER ASSIGN expr
         { $$ = make_struct_field($2, NULL, $4, 0); $$->line = @1.first_line; }
+    | WEAK VAR IDENTIFIER COLON type_spec
+        { $$ = make_weak_struct_field($3, $5, 0); $$->line = @1.first_line; }
+    | WEAK LET IDENTIFIER COLON type_spec
+        { $$ = make_weak_struct_field($3, $5, 1); $$->line = @1.first_line; }
     ;
 
 arg_list:

@@ -460,8 +460,8 @@ void gen_expr(CodegenContext *ctx, ASTNode *expr) {
                     }
                     cg_emit(ctx, "; ");
 
-                    /* Retain reference-type fields */
-                    if (is_ref_type(fd->type->kind)) {
+                    /* Retain reference-type fields (skip weak fields) */
+                    if (!fd->is_weak && is_ref_type(fd->type->kind)) {
                         if (!val || !val->is_fresh_alloc) {
                             char buf[128];
                             snprintf(buf, sizeof(buf), "__ci_%d->%s", t, fd->name);
@@ -1435,7 +1435,13 @@ void gen_stmt(CodegenContext *ctx, ASTNode *node) {
                 }
             }
 
-            if (fd && is_ref_type(fd->type->kind) && obj_kind == TK_CLASS) {
+            if (fd && fd->is_weak) {
+                /* Weak fields: no ARC, just assign */
+                gen_expr(ctx, obj);
+                cg_emitf(ctx, "->%s = ", field);
+                gen_expr(ctx, val);
+                cg_emit(ctx, ";\n");
+            } else if (fd && is_ref_type(fd->type->kind) && obj_kind == TK_CLASS) {
                 /* Class ref-type field: pre-evaluate obj pointer and val */
                 int t_obj = ctx->temp_counter++;
                 int t_val = ctx->temp_counter++;
@@ -1443,10 +1449,8 @@ void gen_stmt(CodegenContext *ctx, ASTNode *node) {
                 gen_expr(ctx, obj);
                 cg_emit(ctx, ";\n");
                 cg_emit_indent(ctx);
-                if (fd->type->kind == TK_CLASS && fd->type->name)
-                    cg_emitf(ctx, "struct %s *__t%d = ", fd->type->name, t_val);
-                else
-                    cg_emitf(ctx, "%s __t%d = ", type_to_c(fd->type->kind), t_val);
+                char tname[32]; snprintf(tname, sizeof(tname), "__t%d", t_val);
+                emit_ref_temp_decl(ctx, tname, fd->type);
                 gen_expr(ctx, val);
                 cg_emit(ctx, ";\n");
                 cg_emit_indent(ctx);
@@ -1463,10 +1467,8 @@ void gen_stmt(CodegenContext *ctx, ASTNode *node) {
             } else if (fd && is_ref_type(fd->type->kind) && obj_kind == TK_STRUCT) {
                 /* Struct ref-type field: obj is an lvalue, only pre-evaluate val */
                 int t_val = ctx->temp_counter++;
-                if (fd->type->kind == TK_CLASS && fd->type->name)
-                    cg_emitf(ctx, "struct %s *__t%d = ", fd->type->name, t_val);
-                else
-                    cg_emitf(ctx, "%s __t%d = ", type_to_c(fd->type->kind), t_val);
+                char tname[32]; snprintf(tname, sizeof(tname), "__t%d", t_val);
+                emit_ref_temp_decl(ctx, tname, fd->type);
                 gen_expr(ctx, val);
                 cg_emit(ctx, ";\n");
                 cg_emit_indent(ctx);

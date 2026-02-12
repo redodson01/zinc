@@ -32,7 +32,7 @@ typedef enum {
 
 /* Resolved type representation — used by semantic analysis and codegen.
    TypeInfo (below) is the parser-side type specification; Type is what the
-   compiler resolved.  Semantic analysis converts TypeInfo -> Type. */
+   compiler resolved.  Semantic analysis converts TypeInfo → Type. */
 typedef struct Type {
     TypeKind kind;
     int is_optional;
@@ -157,7 +157,7 @@ struct ASTNode {
         struct { ASTNode *object; ASTNode *index; } index_access;
         struct { ASTNode *operand; } optional_check;
         struct { char *name; NodeList *fields; int is_class; } type_def;
-        struct { char *name; TypeInfo *type_info; ASTNode *default_value; int is_const; } struct_field;
+        struct { char *name; TypeInfo *type_info; ASTNode *default_value; int is_const; int is_weak; } struct_field;
         struct { char *name; ASTNode *value; } named_arg;
         struct { NodeList *elements; } tuple;
         struct { NodeList *fields; } object_literal;
@@ -217,6 +217,7 @@ ASTNode *make_typed_empty_hash(TypeKind key_type, TypeKind value_type);
 ASTNode *make_typed_empty_hash_named(TypeKind key_type, char *value_name);
 ASTNode *make_type_def(char *name, NodeList *fields, int is_class);
 ASTNode *make_struct_field(char *name, TypeInfo *type_info, ASTNode *default_value, int is_const);
+ASTNode *make_weak_struct_field(char *name, TypeInfo *type_info, int is_const);
 ASTNode *make_named_arg(char *name, ASTNode *value);
 ASTNode *make_tuple(NodeList *elements);
 ASTNode *make_object_literal(NodeList *fields);

@@ -10,6 +10,7 @@
    value-type (TK_STRUCT) fields. Used by class/object release functions. */
 static void emit_nested_releases(CodegenContext *ctx, const char *prefix, StructDef *sd) {
     for (StructFieldDef *fd = sd->fields; fd; fd = fd->next) {
+        if (fd->is_weak) continue;
         Type *ft = fd->type;
         if (!ft) continue;
         if (ft->kind == TK_STRING) {
