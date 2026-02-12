@@ -9,7 +9,7 @@
 typedef struct CGScopeVar {
     char *name;
     char *type_name;   /* "zn_str" for strings */
-    int is_value_type; /* 1 for struct with ref-counted subfields */
+    int is_value_type; /* 1 for struct/tuple with ref-counted subfields */
     struct CGScopeVar *next;
 } CGScopeVar;
 
@@ -99,5 +99,6 @@ void gen_func_def(CodegenContext *ctx, ASTNode *func);
 
 void gen_struct_def(CodegenContext *ctx, ASTNode *node);
 void gen_class_def(CodegenContext *ctx, ASTNode *node);
+void gen_tuple_typedefs(CodegenContext *ctx);
 
 #endif

@@ -1,0 +1,51 @@
+# Tuple tests - anonymous value types
+
+func main() {
+    # Positional tuple
+    var t = (10, 20)
+    var a = t.0
+    var b = t.1
+
+    # Three elements
+    var t3 = (1, 2, 3)
+    var e0 = t3.0
+    var e1 = t3.1
+    var e2 = t3.2
+
+    # Named tuple
+    var h = (feet: 5, inches: 11)
+    var f = h.feet
+    var i = h.inches
+
+    # Positional mutation
+    var m = (1, 2, 3)
+    m.0 = 100
+    m.2 = 300
+
+    # Named mutation
+    var point = (x: 0, y: 0)
+    point.x = 42
+    point.y = 99
+
+    # Mixed types
+    var mix = (42, true, 3.14)
+    var mi = mix.0
+    var mb = mix.1
+
+    # Let tuple (read only)
+    let lt = (10, 20)
+    var r = lt.0
+
+    # Type dedup: same-typed tuples share the type
+    var d1 = (1, 2)
+    var d2 = (3, 4)
+    d1 = d2
+
+    # Dot-integer access
+    var di = (100, 200, 300)
+    var x = di.0
+    var y = di.1
+    var z = di.2
+
+    0
+}

@@ -475,6 +475,54 @@ var cfg = Config(width: 800, height: 600)  # debug defaults to false
 
 > **Note:** ARC does not detect reference cycles. Avoid creating objects that reference each other in a cycle, as they will not be freed.
 
+### Tuples
+
+Tuples are lightweight value types for grouping multiple values. Fields are implicitly `var`.
+
+**Positional tuples** use numeric access (`.0`, `.1`, etc.):
+
+```
+var point = (10, 20)
+let x = point.0       # 10
+let y = point.1       # 20
+point.0 = 30          # mutation (var binding)
+```
+
+**Named tuples** use named field access:
+
+```
+var height = (feet: 5, inches: 11)
+let f = height.feet    # 5
+height.inches = 10     # mutation
+```
+
+Tuples with the same field types share a single type (canonical deduplication):
+
+```
+var a = (1, 2)
+var b = (3, 4)
+a = b                  # same type: both (int, int)
+```
+
+Like structs, `let` bindings prevent mutation of tuple fields:
+
+```
+let t = (10, 20)
+t.0 = 5               # Error: immutable binding
+```
+
+**Tuple type annotations** can be used in function parameters — both positional and named:
+
+```
+func sum_pair(p: (int, int)) {
+    p.0 + p.1
+}
+
+func distance(p: (x: int, y: int)) {
+    p.x + p.y
+}
+```
+
 ### Built-in Functions
 
 #### print
@@ -490,7 +538,7 @@ Takes exactly one `String` argument. Use string interpolation and escape sequenc
 
 ### Program Structure
 
-A Zinc program is a series of `func`, `struct`, and `class` definitions. Execution starts at `main`.
+A Zinc program is a series of `func`, `struct`, `class`, and tuple definitions. Execution starts at `main`.
 
 ```
 func helper(x: int) {

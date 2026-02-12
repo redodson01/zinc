@@ -30,11 +30,11 @@ typedef enum {
 
 /* Resolved type representation — used by semantic analysis and codegen.
    TypeInfo (below) is the parser-side type specification; Type is what the
-   compiler resolved.  Semantic analysis converts TypeInfo → Type. */
+   compiler resolved.  Semantic analysis converts TypeInfo -> Type. */
 typedef struct Type {
     TypeKind kind;
     int is_optional;
-    char *name;           /* struct/class name */
+    char *name;           /* struct/class/tuple canonical name */
 } Type;
 
 /* Type helpers */
@@ -43,11 +43,20 @@ Type *type_clone(const Type *t);
 void type_free(Type *t);
 int type_eq(const Type *a, const Type *b);
 
+/* Named field in a type specification: for tuple type annotations */
+typedef struct TypeInfoField {
+    char *name;
+    struct TypeInfo *type;
+    struct TypeInfoField *next;
+} TypeInfoField;
+
 /* TypeInfo for type specifications in function parameters */
 typedef struct TypeInfo {
     TypeKind kind;
     int is_optional;        /* 1 if T?, 0 otherwise */
     char *name;             /* struct/class name, NULL for non-struct types */
+    TypeInfoField *fields;  /* For tuple type annotations */
+    int is_tuple;           /* 1 for tuple type annotations */
 } TypeInfo;
 
 Type *type_from_info(TypeInfo *ti);
@@ -84,6 +93,7 @@ typedef enum {
     NODE_STRUCT_FIELD,
 
     NODE_NAMED_ARG,
+    NODE_TUPLE,
 } NodeType;
 
 typedef struct ASTNode ASTNode;
@@ -92,7 +102,7 @@ typedef struct NodeList NodeList;
 struct NodeList {
     ASTNode *node;
     NodeList *next;
-    NodeList *tail;  /* Only valid on head node — enables O(1) list_append */
+    NodeList *tail;  /* Only valid on head node -- enables O(1) list_append */
 };
 
 struct ASTNode {
@@ -126,12 +136,13 @@ struct ASTNode {
         struct { ASTNode *value; } ret;
         struct { ASTNode *value; } break_expr;
         struct { ASTNode *value; } continue_expr;
-        struct { ASTNode *object; char *field; } field_access;
+        struct { ASTNode *object; char *field; int is_dot_int; } field_access;
         struct { ASTNode *object; ASTNode *index; } index_access;
         struct { ASTNode *operand; } optional_check;
         struct { char *name; NodeList *fields; int is_class; } type_def;
         struct { char *name; TypeInfo *type_info; ASTNode *default_value; int is_const; } struct_field;
         struct { char *name; ASTNode *value; } named_arg;
+        struct { NodeList *elements; } tuple;
     } data;
 };
 
@@ -169,11 +180,15 @@ ASTNode *make_optional_check(ASTNode *operand);
 ASTNode *make_type_def(char *name, NodeList *fields, int is_class);
 ASTNode *make_struct_field(char *name, TypeInfo *type_info, ASTNode *default_value, int is_const);
 ASTNode *make_named_arg(char *name, ASTNode *value);
+ASTNode *make_tuple(NodeList *elements);
 
-/* Struct type info helper */
+/* Tuple type helpers */
+TypeInfoField *make_type_info_field(char *name, TypeInfo *type);
+TypeInfoField *type_info_field_append(TypeInfoField *list, TypeInfoField *field);
 TypeInfo *make_struct_type_info(char *name);
+TypeInfo *make_tuple_type_info(TypeInfoField *fields);
 
-/* List utilities — O(1) append via tail pointer */
+/* List utilities -- O(1) append via tail pointer */
 NodeList *make_list(ASTNode *node);
 NodeList *list_append(NodeList *list, ASTNode *node);
 

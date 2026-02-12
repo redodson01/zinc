@@ -37,6 +37,7 @@
     ASTNode *node;
     NodeList *list;
     TypeInfo *type;
+    TypeInfoField *type_field;
 }
 
 %token <ival> INT_LIT
@@ -63,8 +64,10 @@
 %type <node> struct_def class_def struct_field arg_or_named
 %type <node> interp_parts
 %type <list> top_level_list expr_list param_list arg_list struct_field_list
+%type <list> tuple_rest named_tuple_rest
 
 %type <type> type_spec
+%type <type_field> tuple_type_elems tuple_type_elem
 
 %right BREAK CONTINUE RETURN
 %right ASSIGN PLUS_ASSIGN MINUS_ASSIGN STAR_ASSIGN SLASH_ASSIGN PERCENT_ASSIGN
@@ -116,6 +119,21 @@ type_spec:
     | TYPE_CHAR                         { $$ = make_type_info(TK_CHAR); }
     | IDENTIFIER                        { $$ = make_struct_type_info($1); }
     | type_spec QUESTION                { $$ = make_optional_type($1); }
+    | LPAREN tuple_type_elems RPAREN   { $$ = make_tuple_type_info($2); }
+    ;
+
+tuple_type_elems:
+    tuple_type_elem COMMA tuple_type_elem {
+        $1->next = $3; $$ = $1;
+    }
+    | tuple_type_elems COMMA tuple_type_elem {
+        $$ = type_info_field_append($1, $3);
+    }
+    ;
+
+tuple_type_elem:
+    IDENTIFIER COLON type_spec          { $$ = make_type_info_field($1, $3); }
+    | type_spec                         { $$ = make_type_info_field(NULL, $1); }
     ;
 
 block:
@@ -166,12 +184,24 @@ expr:
     | expr LBRACKET expr RBRACKET       { $$ = make_index_access($1, $3); $$->line = @$.first_line; }
     /* Field access */
     | expr DOT IDENTIFIER               { $$ = make_field_access($1, $3); $$->line = @$.first_line; }
+    /* Dot-integer access for tuples: t.0 → t._0 */
+    | expr DOT INT_LIT                  { char buf[32]; snprintf(buf, sizeof(buf), "_%lld", (long long)$3);
+                                          $$ = make_field_access($1, strdup(buf)); $$->line = @$.first_line;
+                                          $$->data.field_access.is_dot_int = 1; }
     /* Optional check */
     | expr QUESTION                     { $$ = make_optional_check($1); $$->line = @$.first_line; }
     /* Function call */
     | IDENTIFIER LPAREN arg_list RPAREN { $$ = make_call($1, $3); $$->line = @1.first_line; }
     /* Parenthesized expression */
     | LPAREN expr RPAREN                { $$ = $2; }
+    /* Tuple literals */
+    | LPAREN expr COMMA tuple_rest RPAREN
+        { NodeList *elems = make_list($2); elems->tail->next = $4; elems->tail = $4->tail;
+          $$ = make_tuple(elems); $$->line = @1.first_line; }
+    | LPAREN IDENTIFIER COLON expr COMMA named_tuple_rest RPAREN
+        { NodeList *elems = make_list(make_named_arg($2, $4));
+          elems->tail->next = $6; elems->tail = $6->tail;
+          $$ = make_tuple(elems); $$->line = @1.first_line; }
     /* Control flow expressions */
     | if_expr                           { $$ = $1; }
     | unless_expr                       { $$ = $1; }
@@ -268,6 +298,17 @@ arg_list:
 arg_or_named:
     expr                                { $$ = $1; }
     | IDENTIFIER COLON expr             { $$ = make_named_arg($1, $3); }
+    ;
+
+tuple_rest:
+    expr                                { $$ = make_list($1); }
+    | tuple_rest COMMA expr             { $$ = list_append($1, $3); }
+    ;
+
+named_tuple_rest:
+    IDENTIFIER COLON expr               { $$ = make_list(make_named_arg($1, $3)); }
+    | named_tuple_rest COMMA IDENTIFIER COLON expr
+                                        { $$ = list_append($1, make_named_arg($3, $5)); }
     ;
 
 primary:

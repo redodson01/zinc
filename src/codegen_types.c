@@ -87,3 +87,20 @@ void gen_class_def(CodegenContext *ctx, ASTNode *node) {
     cg_emit(ctx, "}\n\n");
 }
 
+/* Generate tuple typedefs (anonymous struct types registered by semantic analysis) */
+void gen_tuple_typedefs(CodegenContext *ctx) {
+    for (int _bi = 0; _bi < STRUCT_BUCKETS; _bi++)
+    for (StructDef *sd = ctx->sem_ctx->struct_buckets[_bi]; sd; sd = sd->next) {
+        if (strncmp(sd->name, "__ZnTuple", 9) == 0) {
+            fprintf(ctx->h_file, "typedef struct {\n");
+            for (StructFieldDef *fd = sd->fields; fd; fd = fd->next) {
+                if (fd->type->kind == TK_STRUCT && fd->type->name) {
+                    fprintf(ctx->h_file, "    %s %s;\n", fd->type->name, fd->name);
+                } else {
+                    fprintf(ctx->h_file, "    %s %s;\n", type_to_c(fd->type->kind), fd->name);
+                }
+            }
+            fprintf(ctx->h_file, "} %s;\n\n", sd->name);
+        }
+    }
+}

@@ -1,5 +1,5 @@
 /*
- * Code generation for Zinc → C transpilation.
+ * Code generation for Zinc -> C transpilation.
  *
  * Expression-oriented control flow uses GCC statement expressions ({ ... })
  * so that `if`, `while`, and `for` can appear in value positions.
@@ -7,9 +7,9 @@
  * but keeps the codegen simple and the generated code readable. (#8)
  *
  * Split into three files:
- *   codegen.c       — shared infrastructure, emit helpers, ARC scope, generate()
- *   codegen_types.c — struct/class layout, extern declarations
- *   codegen_expr.c  — expression/statement generation, function emission
+ *   codegen.c       -- shared infrastructure, emit helpers, ARC scope, generate()
+ *   codegen_types.c -- struct/class/tuple layout
+ *   codegen_expr.c  -- expression/statement generation, function emission
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -308,6 +308,7 @@ static void ast_walk(ASTNode *node, ASTVisitor visitor, void *data) {
         ast_walk(node->data.struct_field.default_value, visitor, data);
         break;
     case NODE_NAMED_ARG: ast_walk(node->data.named_arg.value, visitor, data); break;
+    case NODE_TUPLE: ast_walk_list(node->data.tuple.elements, visitor, data); break;
     case NODE_INDEX:
         ast_walk(node->data.index_access.object, visitor, data);
         ast_walk(node->data.index_access.index, visitor, data);
@@ -325,7 +326,7 @@ static void ast_walk_list(NodeList *list, ASTVisitor visitor, void *data) {
     }
 }
 
-/* String literal visitor — assigns codegen-side IDs and emits static structs (#3, #6) */
+/* String literal visitor -- assigns codegen-side IDs and emits static structs (#3, #6) */
 static void string_literal_visitor(ASTNode *node, void *data) {
     if (node->type != NODE_STRING) return;
     CodegenContext *ctx = data;
@@ -385,6 +386,9 @@ void generate(CodegenContext *ctx, ASTNode *root) {
             gen_class_def(ctx, s->node);
         }
     }
+
+    /* Generate tuple typedefs */
+    gen_tuple_typedefs(ctx);
 
     /* Collect string literals and emit static structs */
     collect_string_literals(ctx, root);

@@ -290,10 +290,39 @@ ASTNode *make_named_arg(char *name, ASTNode *value) {
     return n;
 }
 
+ASTNode *make_tuple(NodeList *elements) {
+    ASTNode *n = alloc_node(NODE_TUPLE);
+    n->data.tuple.elements = elements;
+    return n;
+}
+
+TypeInfoField *make_type_info_field(char *name, TypeInfo *type) {
+    TypeInfoField *f = calloc(1, sizeof(TypeInfoField));
+    f->name = name;
+    f->type = type;
+    return f;
+}
+
+TypeInfoField *type_info_field_append(TypeInfoField *list, TypeInfoField *field) {
+    if (!list) return field;
+    TypeInfoField *cur = list;
+    while (cur->next) cur = cur->next;
+    cur->next = field;
+    return list;
+}
+
 TypeInfo *make_struct_type_info(char *name) {
     TypeInfo *t = calloc(1, sizeof(TypeInfo));
     t->kind = TK_STRUCT;
     t->name = name;
+    return t;
+}
+
+TypeInfo *make_tuple_type_info(TypeInfoField *fields) {
+    TypeInfo *t = calloc(1, sizeof(TypeInfo));
+    t->kind = TK_STRUCT;
+    t->is_tuple = 1;
+    t->fields = fields;
     return t;
 }
 
@@ -309,6 +338,14 @@ Type *type_from_info(TypeInfo *ti) {
 void free_type_info(TypeInfo *ti) {
     if (!ti) return;
     free(ti->name);
+    TypeInfoField *f = ti->fields;
+    while (f) {
+        TypeInfoField *next = f->next;
+        free(f->name);
+        free_type_info(f->type);
+        free(f);
+        f = next;
+    }
     free(ti);
 }
 
@@ -523,6 +560,11 @@ void print_ast(ASTNode *node, int indent) {
         printf("NamedArg: %s\n", node->data.named_arg.name);
         print_ast(node->data.named_arg.value, indent + 1);
         break;
+    case NODE_TUPLE:
+        printf("Tuple\n");
+        for (NodeList *l = node->data.tuple.elements; l; l = l->next)
+            print_ast(l->node, indent + 1);
+        break;
     }
 }
 
@@ -620,6 +662,9 @@ void free_ast(ASTNode *node) {
     case NODE_NAMED_ARG:
         free(node->data.named_arg.name);
         free_ast(node->data.named_arg.value);
+        break;
+    case NODE_TUPLE:
+        free_list(node->data.tuple.elements);
         break;
     }
     type_free(node->resolved_type);

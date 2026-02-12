@@ -367,7 +367,7 @@ void gen_expr(CodegenContext *ctx, ASTNode *expr) {
                 /* Check if any field needs ARC retain */
                 int needs_arc = 0;
                 for (StructFieldDef *fd = sd->fields; fd; fd = fd->next) {
-                    if (fd->type && (fd->type->kind == TK_STRING || fd->type->kind == TK_CLASS)) {
+                    if (fd->type && is_ref_type(fd->type->kind)) {
                         needs_arc = 1;
                         break;
                     }
@@ -495,6 +495,73 @@ void gen_expr(CodegenContext *ctx, ASTNode *expr) {
             cg_emitf(ctx, ".%s", expr->data.field_access.field);
         }
         break;
+    case NODE_TUPLE: {
+        const char *name = expr->resolved_type ? expr->resolved_type->name : NULL;
+        StructDef *sd = lookup_struct(ctx->sem_ctx, name);
+
+        /* Check if any field needs ARC retain */
+        int needs_arc = 0;
+        if (sd) {
+            for (StructFieldDef *fd = sd->fields; fd; fd = fd->next) {
+                if (fd->type && is_ref_type(fd->type->kind)) {
+                    needs_arc = 1;
+                    break;
+                }
+            }
+        }
+
+        if (needs_arc) {
+            int t = ctx->temp_counter++;
+            cg_emitf(ctx, "({ %s __vt%d = (%s){", name, t, name);
+            if (sd) {
+                StructFieldDef *fd = sd->fields;
+                int first = 1;
+                for (NodeList *e = expr->data.tuple.elements; e && fd; e = e->next, fd = fd->next) {
+                    if (!first) cg_emit(ctx, ", ");
+                    cg_emitf(ctx, ".%s = ", fd->name);
+                    if (e->node->type == NODE_NAMED_ARG) {
+                        gen_expr(ctx, e->node->data.named_arg.value);
+                    } else {
+                        gen_expr(ctx, e->node);
+                    }
+                    first = 0;
+                }
+            }
+            cg_emit(ctx, "}; ");
+            /* Emit retains for ref-counted fields */
+            if (sd) {
+                StructFieldDef *fd = sd->fields;
+                for (NodeList *e = expr->data.tuple.elements; e && fd; e = e->next, fd = fd->next) {
+                    ASTNode *val = (e->node->type == NODE_NAMED_ARG) ? e->node->data.named_arg.value : e->node;
+                    if (is_ref_type(fd->type->kind) && !(val && val->is_fresh_alloc)) {
+                        char buf[128];
+                        snprintf(buf, sizeof(buf), "__vt%d.%s", t, fd->name);
+                        emit_retain_call(ctx, buf, fd->type);
+                        cg_emit(ctx, "; ");
+                    }
+                }
+            }
+            cg_emitf(ctx, "__vt%d; })", t);
+        } else {
+            cg_emitf(ctx, "(%s){", name);
+            if (sd) {
+                StructFieldDef *fd = sd->fields;
+                int first = 1;
+                for (NodeList *e = expr->data.tuple.elements; e && fd; e = e->next, fd = fd->next) {
+                    if (!first) cg_emit(ctx, ", ");
+                    cg_emitf(ctx, ".%s = ", fd->name);
+                    if (e->node->type == NODE_NAMED_ARG) {
+                        gen_expr(ctx, e->node->data.named_arg.value);
+                    } else {
+                        gen_expr(ctx, e->node);
+                    }
+                    first = 0;
+                }
+            }
+            cg_emit(ctx, "}");
+        }
+        break;
+    }
     case NODE_INDEX:
         /* String indexing */
         cg_emit(ctx, "(");
