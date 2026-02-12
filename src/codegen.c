@@ -1,5 +1,5 @@
 /*
- * Code generation for Zinc -> C transpilation.
+ * Code generation for Zinc → C transpilation.
  *
  * Expression-oriented control flow uses GCC statement expressions ({ ... })
  * so that `if`, `while`, and `for` can appear in value positions.
@@ -7,9 +7,9 @@
  * but keeps the codegen simple and the generated code readable. (#8)
  *
  * Split into three files:
- *   codegen.c       -- shared infrastructure, emit helpers, ARC scope, generate()
- *   codegen_types.c -- struct layout emission
- *   codegen_expr.c  -- expression/statement generation, function emission
+ *   codegen.c       — shared infrastructure, emit helpers, ARC scope, generate()
+ *   codegen_types.c — struct/class layout, extern declarations
+ *   codegen_expr.c  — expression/statement generation, function emission
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -57,6 +57,7 @@ const char *type_to_c(TypeKind t) {
     case TK_CHAR:   return "char";
     case TK_VOID:   return "void";
     case TK_STRUCT: return "/* struct */";
+    case TK_CLASS:  return "/* class */";
     default:        return "int64_t";
     }
 }
@@ -72,7 +73,7 @@ const char *opt_type_for(TypeKind t) {
 }
 
 int is_ref_type(TypeKind t) {
-    return (t == TK_STRING);
+    return t == TK_STRING || t == TK_CLASS;
 }
 
 int expr_is_string(ASTNode *expr) {
@@ -126,6 +127,9 @@ static void emit_value_type_field_releases(CodegenContext *ctx, const char *pref
         if (ft->kind == TK_STRING) {
             cg_emit_indent(ctx);
             cg_emitf(ctx, "__zn_str_release(%s.%s);\n", prefix, fd->name);
+        } else if (ft->kind == TK_CLASS && ft->name) {
+            cg_emit_indent(ctx);
+            cg_emitf(ctx, "__%s_release(%s.%s);\n", ft->name, prefix, fd->name);
         } else if (ft->kind == TK_STRUCT && ft->name) {
             StructDef *inner = lookup_struct(ctx->sem_ctx, ft->name);
             if (inner) {
@@ -176,6 +180,7 @@ void emit_retain_call(CodegenContext *ctx, const char *expr, Type *type) {
     if (!type) return;
     switch (type->kind) {
     case TK_STRING: cg_emitf(ctx, "__zn_str_retain(%s)", expr); break;
+    case TK_CLASS:  if (type->name) cg_emitf(ctx, "__%s_retain(%s)", type->name, expr); break;
     default: break;
     }
 }
@@ -184,6 +189,7 @@ void emit_release_call(CodegenContext *ctx, const char *expr, Type *type) {
     if (!type) return;
     switch (type->kind) {
     case TK_STRING: cg_emitf(ctx, "__zn_str_release(%s)", expr); break;
+    case TK_CLASS:  if (type->name) cg_emitf(ctx, "__%s_release(%s)", type->name, expr); break;
     default: break;
     }
 }
@@ -193,6 +199,7 @@ void emit_retain_open(CodegenContext *ctx, Type *type) {
     if (!type) return;
     switch (type->kind) {
     case TK_STRING: cg_emit(ctx, "__zn_str_retain("); break;
+    case TK_CLASS:  if (type->name) cg_emitf(ctx, "__%s_retain(", type->name); break;
     default: break;
     }
 }
@@ -201,6 +208,7 @@ void emit_release_open(CodegenContext *ctx, Type *type) {
     if (!type) return;
     switch (type->kind) {
     case TK_STRING: cg_emit(ctx, "__zn_str_release("); break;
+    case TK_CLASS:  if (type->name) cg_emitf(ctx, "__%s_release(", type->name); break;
     default: break;
     }
 }
@@ -317,7 +325,7 @@ static void ast_walk_list(NodeList *list, ASTVisitor visitor, void *data) {
     }
 }
 
-/* String literal visitor -- assigns codegen-side IDs and emits static structs (#3, #6) */
+/* String literal visitor — assigns codegen-side IDs and emits static structs (#3, #6) */
 static void string_literal_visitor(ASTNode *node, void *data) {
     if (node->type != NODE_STRING) return;
     CodegenContext *ctx = data;
@@ -368,6 +376,13 @@ void generate(CodegenContext *ctx, ASTNode *root) {
     for (NodeList *s = root->data.program.stmts; s; s = s->next) {
         if (s->node && s->node->type == NODE_TYPE_DEF && !s->node->data.type_def.is_class) {
             gen_struct_def(ctx, s->node);
+        }
+    }
+
+    /* Generate class typedefs (to header) and ARC functions (to C file) */
+    for (NodeList *s = root->data.program.stmts; s; s = s->next) {
+        if (s->node && s->node->type == NODE_TYPE_DEF && s->node->data.type_def.is_class) {
+            gen_class_def(ctx, s->node);
         }
     }
 

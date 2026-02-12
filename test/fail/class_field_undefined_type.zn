@@ -1,0 +1,6 @@
+# ERRORS: 1
+# Class field with undefined type (previously not caught)
+class Foo {
+    var bar: NonExistent
+}
+func main() { 0 }

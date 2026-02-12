@@ -1,0 +1,97 @@
+# Tests that side-effectful expressions are evaluated exactly once
+# in string interpolation, field assignments, and variable assignments.
+#
+# Uses a Counter class as shared mutable state. Functions increment the
+# counter as a side effect. If an expression is evaluated more than once
+# (the old bug), the counter will be too high.
+
+class Counter {
+    var n: int
+}
+
+class Box {
+    var label: String
+}
+
+class Obj {
+    var x: int
+}
+
+# Side effect: increments counter. Returns int (needs string coercion).
+func bump_int(c: Counter) {
+    c.n = c.n + 1
+    c.n
+}
+
+# Side effect: increments counter. Returns a String (ref type).
+func bump_str(c: Counter) {
+    c.n = c.n + 1
+    "s"
+}
+
+# Side effect: increments counter. Returns the same Box it receives.
+func get_box(c: Counter, b: Box) {
+    c.n = c.n + 1
+    b
+}
+
+# Side effect: increments counter. Returns a new Obj.
+func make_obj(c: Counter) {
+    c.n = c.n + 1
+    Obj(x: c.n)
+}
+
+func main() {
+    var c = Counter(n: 0)
+
+    # --- Fix #4: String concat coercion temps ---
+
+    # Test 1: Single non-string interpolation.
+    # bump_int() returns int, coerced via __zn_str_from_int.
+    # Old bug: coercion emitted twice (concat + release), calling bump_int twice.
+    c.n = 0
+    let s1 = "value: ${bump_int(c)}"
+    if c.n != 1 { return 1 }
+
+    # Test 2: Two non-string interpolations in one string.
+    # Each bump_int call should happen exactly once.
+    c.n = 0
+    let s2 = "${bump_int(c)} and ${bump_int(c)}"
+    if c.n != 2 { return 1 }
+
+    # Test 3: Mixed string and non-string leaves.
+    let greeting = "hello"
+    c.n = 0
+    let s3 = "${greeting}: ${bump_int(c)}"
+    if c.n != 1 { return 1 }
+
+    # --- Fix #5: Field assignment temps ---
+
+    # Test 4: Field assignment with side-effectful value.
+    # bump_str() returns a String. Assigning to a String field triggers
+    # retain(val)/release(old)/assign. Old bug: val evaluated twice.
+    c.n = 0
+    var b = Box(label: "init")
+    b.label = bump_str(c)
+    if c.n != 1 { return 1 }
+
+    # Test 5: Field assignment with side-effectful object expression.
+    # get_box() returns a Box. The object expression in obj.field = val
+    # was evaluated twice in old code (once for release, once for assign).
+    c.n = 0
+    var b2 = Box(label: "init")
+    get_box(c, b2).label = "new"
+    if c.n != 1 { return 1 }
+
+    # --- Fix #5: Class variable assignment temps ---
+
+    # Test 6: Class variable reassignment with side-effectful value.
+    # make_obj() returns a class instance. Reassigning a class variable
+    # triggers retain(val)/release(old)/assign. Old bug: val evaluated twice.
+    c.n = 0
+    var o = Obj(x: 0)
+    o = make_obj(c)
+    if c.n != 1 { return 1 }
+
+    0
+}

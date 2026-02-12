@@ -34,7 +34,7 @@ typedef struct Symbol {
     struct Symbol *next;
 } Symbol;
 
-/* Scope for nested scopes -- hash table with chaining */
+/* Scope for nested scopes — hash table with chaining */
 #define SCOPE_BUCKETS 64
 #define STRUCT_BUCKETS 32
 
@@ -60,7 +60,7 @@ typedef struct {
 SemanticContext *semantic_init(void);
 void semantic_free(SemanticContext *ctx);
 
-/* Main analysis function -- returns error count */
+/* Main analysis function — returns error count */
 int analyze(SemanticContext *ctx, ASTNode *root);
 
 /* Get inferred type of an expression */

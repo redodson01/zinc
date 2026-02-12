@@ -1,0 +1,65 @@
+# Class tests - reference types with ARC
+
+class Counter {
+    var count: int
+}
+
+class Point {
+    var x: int
+    var y: int
+}
+
+class Color {
+    let red: int
+    let green: int
+    let blue: int
+}
+
+class Config {
+    var width: int
+    var height: int
+    var debug = false
+}
+
+func make_point(x: int, y: int) {
+    Point(x: x, y: y)
+}
+
+func main() {
+    # Basic class creation
+    var c = Counter(count: 0)
+    c.count = 42
+
+    # Two fields
+    var p = Point(x: 10, y: 20)
+    p.x = 30
+    p.y = 40
+
+    # Let fields (immutable)
+    var col = Color(red: 255, green: 128, blue: 0)
+    var r = col.red
+
+    # Default values
+    var cfg = Config(width: 800, height: 600)
+    cfg.debug = true
+
+    # let binding on class: prevents reassignment but fields are still mutable
+    let q = Point(x: 1, y: 2)
+    q.x = 10
+    q.y = 20
+
+    # Class as function return
+    var pt = make_point(100, 200)
+
+    # Reassignment with ARC
+    var a = Point(x: 1, y: 2)
+    var b = Point(x: 3, y: 4)
+    a = b
+
+    # Shared reference
+    var s1 = Point(x: 10, y: 20)
+    var s2 = s1
+    s2.x = 99
+
+    0
+}

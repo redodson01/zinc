@@ -25,15 +25,16 @@ typedef enum {
     TK_CHAR,
     TK_VOID,
     TK_STRUCT,
+    TK_CLASS,
 } TypeKind;
 
 /* Resolved type representation — used by semantic analysis and codegen.
    TypeInfo (below) is the parser-side type specification; Type is what the
-   compiler resolved.  Semantic analysis converts TypeInfo -> Type. */
+   compiler resolved.  Semantic analysis converts TypeInfo → Type. */
 typedef struct Type {
     TypeKind kind;
     int is_optional;
-    char *name;           /* struct canonical name */
+    char *name;           /* struct/class name */
 } Type;
 
 /* Type helpers */
@@ -46,7 +47,7 @@ int type_eq(const Type *a, const Type *b);
 typedef struct TypeInfo {
     TypeKind kind;
     int is_optional;        /* 1 if T?, 0 otherwise */
-    char *name;             /* struct name, NULL for non-struct types */
+    char *name;             /* struct/class name, NULL for non-struct types */
 } TypeInfo;
 
 Type *type_from_info(TypeInfo *ti);

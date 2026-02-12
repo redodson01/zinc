@@ -49,7 +49,7 @@
 %token IF UNLESS ELSE
 %token WHILE UNTIL FOR
 %token BREAK CONTINUE
-%token FUNC RETURN STRUCT
+%token FUNC RETURN STRUCT CLASS
 %token EQ NE LE GE AND OR
 %token PLUS_ASSIGN MINUS_ASSIGN STAR_ASSIGN SLASH_ASSIGN PERCENT_ASSIGN
 %token INCREMENT DECREMENT
@@ -60,7 +60,7 @@
 %type <node> program expr primary block interp_string
 %type <node> if_expr unless_expr while_expr until_expr for_expr
 %type <node> func_def param for_init for_update
-%type <node> struct_def struct_field arg_or_named
+%type <node> struct_def class_def struct_field arg_or_named
 %type <node> interp_parts
 %type <list> top_level_list expr_list param_list arg_list struct_field_list
 
@@ -87,8 +87,10 @@ program:
 top_level_list:
     func_def                        { $$ = make_list($1); }
     | struct_def                    { $$ = make_list($1); }
+    | class_def                     { $$ = make_list($1); }
     | top_level_list func_def       { $$ = list_append($1, $2); }
     | top_level_list struct_def     { $$ = list_append($1, $2); }
+    | top_level_list class_def      { $$ = list_append($1, $2); }
     ;
 
 func_def:
@@ -233,6 +235,12 @@ for_update:
 struct_def:
     STRUCT IDENTIFIER LBRACE struct_field_list RBRACE
         { $$ = make_type_def($2, $4, 0); $$->line = @1.first_line; }
+    ;
+
+/* Class definition (reference type with ARC) */
+class_def:
+    CLASS IDENTIFIER LBRACE struct_field_list RBRACE
+        { $$ = make_type_def($2, $4, 1); $$->line = @1.first_line; }
     ;
 
 struct_field_list:

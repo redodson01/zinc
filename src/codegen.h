@@ -98,5 +98,6 @@ void gen_func_def(CodegenContext *ctx, ASTNode *func);
 /* --- Type layout emission (codegen_types.c) --- */
 
 void gen_struct_def(CodegenContext *ctx, ASTNode *node);
+void gen_class_def(CodegenContext *ctx, ASTNode *node);
 
 #endif

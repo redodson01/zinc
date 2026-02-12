@@ -30,7 +30,7 @@ static void emit_inline_retain(CodegenContext *ctx, int temp_id, const char *pre
 static int struct_has_rc_fields(StructDef *sd, SemanticContext *sem_ctx) {
     for (StructFieldDef *fd = sd->fields; fd; fd = fd->next) {
         if (!fd->type) continue;
-        if (fd->type->kind == TK_STRING) return 1;
+        if (fd->type->kind == TK_STRING || fd->type->kind == TK_CLASS) return 1;
         if (fd->type->kind == TK_STRUCT && fd->type->name) {
             StructDef *inner = lookup_struct(sem_ctx, fd->type->name);
             if (inner && struct_has_rc_fields(inner, sem_ctx)) return 1;
@@ -39,11 +39,20 @@ static int struct_has_rc_fields(StructDef *sd, SemanticContext *sem_ctx) {
     return 0;
 }
 
+static void emit_ref_temp_decl(CodegenContext *ctx, const char *name, Type *type) {
+    if (type->kind == TK_CLASS && type->name) {
+        cg_emitf(ctx, "%s *%s = ", type->name, name);
+    } else {
+        cg_emitf(ctx, "%s %s = ", type_to_c(type->kind), name);
+    }
+}
+
 /* Add a ref-type variable to the ARC scope for release tracking. */
 static void scope_track_ref(CodegenContext *ctx, const char *name, Type *type) {
     if (!ctx->scope || !type) return;
     switch (type->kind) {
     case TK_STRING: cg_scope_add_ref(ctx, name, "zn_str"); break;
+    case TK_CLASS:  if (type->name) cg_scope_add_ref(ctx, name, type->name); break;
     case TK_STRUCT:
         if (type->name) {
             StructDef *sd = lookup_struct(ctx->sem_ctx, type->name);
@@ -316,45 +325,12 @@ void gen_expr(CodegenContext *ctx, ASTNode *expr) {
             const char *name = expr->data.call.name;
             StructDef *sd = lookup_struct(ctx->sem_ctx, name);
 
-            /* Struct init: value type with C99 designators */
-            /* Check if any field needs ARC retain */
-            int needs_arc = 0;
-            if (sd) {
-                for (StructFieldDef *fd = sd->fields; fd; fd = fd->next) {
-                    if (fd->type && fd->type->kind == TK_STRING) {
-                        needs_arc = 1;
-                        break;
-                    }
-                }
-            }
-
-            if (needs_arc) {
+            if (sd && sd->is_class) {
+                /* Class init: heap allocate via __ClassName_alloc() */
                 int t = ctx->temp_counter++;
-                cg_emitf(ctx, "({ %s __vt%d = (%s){", expr->data.call.name, t, expr->data.call.name);
-                int first = 1;
+                cg_emitf(ctx, "({ %s *__ci_%d = __%s_alloc(); ", name, t, name);
+
                 for (StructFieldDef *fd = sd->fields; fd; fd = fd->next) {
-                    if (!first) cg_emit(ctx, ", ");
-                    cg_emitf(ctx, ".%s = ", fd->name);
-                    int found = 0;
-                    for (NodeList *arg = expr->data.call.args; arg; arg = arg->next) {
-                        if (arg->node->type == NODE_NAMED_ARG &&
-                            strcmp(arg->node->data.named_arg.name, fd->name) == 0) {
-                            gen_expr(ctx, arg->node->data.named_arg.value);
-                            found = 1;
-                            break;
-                        }
-                    }
-                    if (!found && fd->default_value) {
-                        gen_expr(ctx, fd->default_value);
-                    } else if (!found) {
-                        cg_emit(ctx, "0");
-                    }
-                    first = 0;
-                }
-                cg_emit(ctx, "}; ");
-                /* Emit retains for ref-counted fields */
-                for (StructFieldDef *fd = sd->fields; fd; fd = fd->next) {
-                    if (!fd->type) continue;
                     ASTNode *val = NULL;
                     for (NodeList *arg = expr->data.call.args; arg; arg = arg->next) {
                         if (arg->node->type == NODE_NAMED_ARG &&
@@ -363,34 +339,107 @@ void gen_expr(CodegenContext *ctx, ASTNode *expr) {
                             break;
                         }
                     }
-                    if (fd->type->kind == TK_STRING && !(val && val->is_fresh_alloc)) {
-                        cg_emitf(ctx, "__zn_str_retain(__vt%d.%s); ", t, fd->name);
-                    }
-                }
-                cg_emitf(ctx, "__vt%d; })", t);
-            } else {
-                cg_emitf(ctx, "(%s){", expr->data.call.name);
-                int first = 1;
-                for (StructFieldDef *fd = sd->fields; fd; fd = fd->next) {
-                    if (!first) cg_emit(ctx, ", ");
-                    cg_emitf(ctx, ".%s = ", fd->name);
-                    int found = 0;
-                    for (NodeList *arg = expr->data.call.args; arg; arg = arg->next) {
-                        if (arg->node->type == NODE_NAMED_ARG &&
-                            strcmp(arg->node->data.named_arg.name, fd->name) == 0) {
-                            gen_expr(ctx, arg->node->data.named_arg.value);
-                            found = 1;
-                            break;
-                        }
-                    }
-                    if (!found && fd->default_value) {
+
+                    cg_emitf(ctx, "__ci_%d->%s = ", t, fd->name);
+                    if (val) {
+                        gen_expr(ctx, val);
+                    } else if (fd->default_value) {
                         gen_expr(ctx, fd->default_value);
-                    } else if (!found) {
+                    } else {
                         cg_emit(ctx, "0");
                     }
-                    first = 0;
+                    cg_emit(ctx, "; ");
+
+                    /* Retain reference-type fields */
+                    if (is_ref_type(fd->type->kind)) {
+                        if (!val || !val->is_fresh_alloc) {
+                            char buf[128];
+                            snprintf(buf, sizeof(buf), "__ci_%d->%s", t, fd->name);
+                            emit_retain_call(ctx, buf, fd->type);
+                            cg_emit(ctx, "; ");
+                        }
+                    }
                 }
-                cg_emit(ctx, "}");
+
+                cg_emitf(ctx, "__ci_%d; })", t);
+            } else {
+                /* Struct init: value type with C99 designators */
+                /* Check if any field needs ARC retain */
+                int needs_arc = 0;
+                for (StructFieldDef *fd = sd->fields; fd; fd = fd->next) {
+                    if (fd->type && (fd->type->kind == TK_STRING || fd->type->kind == TK_CLASS)) {
+                        needs_arc = 1;
+                        break;
+                    }
+                }
+
+                if (needs_arc) {
+                    int t = ctx->temp_counter++;
+                    cg_emitf(ctx, "({ %s __vt%d = (%s){", expr->data.call.name, t, expr->data.call.name);
+                    int first = 1;
+                    for (StructFieldDef *fd = sd->fields; fd; fd = fd->next) {
+                        if (!first) cg_emit(ctx, ", ");
+                        cg_emitf(ctx, ".%s = ", fd->name);
+                        int found = 0;
+                        for (NodeList *arg = expr->data.call.args; arg; arg = arg->next) {
+                            if (arg->node->type == NODE_NAMED_ARG &&
+                                strcmp(arg->node->data.named_arg.name, fd->name) == 0) {
+                                gen_expr(ctx, arg->node->data.named_arg.value);
+                                found = 1;
+                                break;
+                            }
+                        }
+                        if (!found && fd->default_value) {
+                            gen_expr(ctx, fd->default_value);
+                        } else if (!found) {
+                            cg_emit(ctx, "0");
+                        }
+                        first = 0;
+                    }
+                    cg_emit(ctx, "}; ");
+                    /* Emit retains for ref-counted fields */
+                    for (StructFieldDef *fd = sd->fields; fd; fd = fd->next) {
+                        if (!fd->type) continue;
+                        ASTNode *val = NULL;
+                        for (NodeList *arg = expr->data.call.args; arg; arg = arg->next) {
+                            if (arg->node->type == NODE_NAMED_ARG &&
+                                strcmp(arg->node->data.named_arg.name, fd->name) == 0) {
+                                val = arg->node->data.named_arg.value;
+                                break;
+                            }
+                        }
+                        if (is_ref_type(fd->type->kind) && !(val && val->is_fresh_alloc)) {
+                            char buf[128];
+                            snprintf(buf, sizeof(buf), "__vt%d.%s", t, fd->name);
+                            emit_retain_call(ctx, buf, fd->type);
+                            cg_emit(ctx, "; ");
+                        }
+                    }
+                    cg_emitf(ctx, "__vt%d; })", t);
+                } else {
+                    cg_emitf(ctx, "(%s){", expr->data.call.name);
+                    int first = 1;
+                    for (StructFieldDef *fd = sd->fields; fd; fd = fd->next) {
+                        if (!first) cg_emit(ctx, ", ");
+                        cg_emitf(ctx, ".%s = ", fd->name);
+                        int found = 0;
+                        for (NodeList *arg = expr->data.call.args; arg; arg = arg->next) {
+                            if (arg->node->type == NODE_NAMED_ARG &&
+                                strcmp(arg->node->data.named_arg.name, fd->name) == 0) {
+                                gen_expr(ctx, arg->node->data.named_arg.value);
+                                found = 1;
+                                break;
+                            }
+                        }
+                        if (!found && fd->default_value) {
+                            gen_expr(ctx, fd->default_value);
+                        } else if (!found) {
+                            cg_emit(ctx, "0");
+                        }
+                        first = 0;
+                    }
+                    cg_emit(ctx, "}");
+                }
             }
         } else {
             /* Regular function call */
@@ -437,9 +486,14 @@ void gen_expr(CodegenContext *ctx, ASTNode *expr) {
             cg_emit(ctx, ")->_len)");
             break;
         }
-        /* Struct field access: value type uses . accessor */
+        /* Struct/class field access: -> for classes, . for value types */
         gen_expr(ctx, expr->data.field_access.object);
-        cg_emitf(ctx, ".%s", expr->data.field_access.field);
+        if (expr->data.field_access.object->resolved_type &&
+            expr->data.field_access.object->resolved_type->kind == TK_CLASS) {
+            cg_emitf(ctx, "->%s", expr->data.field_access.field);
+        } else {
+            cg_emitf(ctx, ".%s", expr->data.field_access.field);
+        }
         break;
     case NODE_INDEX:
         /* String indexing */
@@ -503,7 +557,11 @@ void gen_expr(CodegenContext *ctx, ASTNode *expr) {
                 cg_emitf(ctx, "} else { __if_%d._has = false; } __if_%d; })", t, t);
             } else {
                 /* Reference type optional (NULL = none) */
-                cg_emitf(ctx, "({ %s __if_%d = NULL; ", type_to_c(rt), t);
+                if (rt == TK_CLASS && expr->resolved_type && expr->resolved_type->name) {
+                    cg_emitf(ctx, "({ %s *__if_%d = NULL; ", expr->resolved_type->name, t);
+                } else {
+                    cg_emitf(ctx, "({ %s __if_%d = NULL; ", type_to_c(rt), t);
+                }
                 cg_emit(ctx, "if (");
                 gen_expr(ctx, expr->data.if_expr.cond);
                 cg_emit(ctx, ") { ");
@@ -543,6 +601,8 @@ void gen_expr(CodegenContext *ctx, ASTNode *expr) {
         /* Non-optional if/else expression */
         if (rt == TK_STRUCT && expr->resolved_type && expr->resolved_type->name) {
             cg_emitf(ctx, "({ %s __if_%d; ", expr->resolved_type->name, t);
+        } else if (rt == TK_CLASS && expr->resolved_type && expr->resolved_type->name) {
+            cg_emitf(ctx, "({ %s *__if_%d; ", expr->resolved_type->name, t);
         } else {
             cg_emitf(ctx, "({ %s __if_%d; ", type_to_c(rt), t);
         }
@@ -615,11 +675,15 @@ void gen_expr(CodegenContext *ctx, ASTNode *expr) {
             const char *opt = opt_type_for(rt);
             if (opt) {
                 cg_emitf(ctx, "({ %s __loop_%d; __loop_%d._has = false; ", opt, t, t);
+            } else if (rt == TK_CLASS && expr->resolved_type && expr->resolved_type->name) {
+                cg_emitf(ctx, "({ %s *__loop_%d = NULL; ", expr->resolved_type->name, t);
             } else {
                 cg_emitf(ctx, "({ %s __loop_%d = NULL; ", type_to_c(rt), t);
             }
         } else {
-            if (is_ref_type(rt)) {
+            if (rt == TK_CLASS && expr->resolved_type && expr->resolved_type->name) {
+                cg_emitf(ctx, "({ %s *__loop_%d = NULL; ", expr->resolved_type->name, t);
+            } else if (is_ref_type(rt)) {
                 cg_emitf(ctx, "({ %s __loop_%d = NULL; ", type_to_c(rt), t);
             } else {
                 cg_emitf(ctx, "({ %s __loop_%d; ", type_to_c(rt), t);
@@ -648,6 +712,8 @@ void gen_expr(CodegenContext *ctx, ASTNode *expr) {
         const char *opt = opt_type_for(rt);
         if (opt) {
             cg_emitf(ctx, "({ %s __loop_%d; __loop_%d._has = false; ", opt, t, t);
+        } else if (rt == TK_CLASS && expr->resolved_type && expr->resolved_type->name) {
+            cg_emitf(ctx, "({ %s *__loop_%d = NULL; ", expr->resolved_type->name, t);
         } else {
             cg_emitf(ctx, "({ %s __loop_%d = NULL; ", type_to_c(rt), t);
         }
@@ -680,6 +746,11 @@ void gen_stmt(CodegenContext *ctx, ASTNode *node) {
         int val_is_optional = vt ? vt->is_optional : 0;
         if (val_is_optional && opt_type_for(t)) {
             cg_emitf(ctx, "%s%s %s = ", cq, opt_type_for(t), name);
+        } else if (t == TK_CLASS && vt->name) {
+            if (is_const)
+                cg_emitf(ctx, "%s *const %s = ", vt->name, name);
+            else
+                cg_emitf(ctx, "%s *%s = ", vt->name, name);
         } else if (t == TK_STRUCT && vt->name) {
             cg_emitf(ctx, "%s%s %s = ", cq, vt->name, name);
         } else if (t == TK_STRING) {
@@ -773,7 +844,7 @@ void gen_stmt(CodegenContext *ctx, ASTNode *node) {
                 /* ARC: pre-eval value, retain-before-release, assign */
                 int t_val = ctx->temp_counter++;
                 char tname[32]; snprintf(tname, sizeof(tname), "__t%d", t_val);
-                cg_emitf(ctx, "%s %s = ", type_to_c(bv->resolved_type->kind), tname);
+                emit_ref_temp_decl(ctx, tname, bv->resolved_type);
                 gen_expr(ctx, bv);
                 cg_emit(ctx, ";\n");
                 cg_emit_indent(ctx);
@@ -827,7 +898,7 @@ void gen_stmt(CodegenContext *ctx, ASTNode *node) {
                 /* ARC: pre-eval value, retain-before-release, assign */
                 int t_val = ctx->temp_counter++;
                 char tname[32]; snprintf(tname, sizeof(tname), "__t%d", t_val);
-                cg_emitf(ctx, "%s %s = ", type_to_c(cv->resolved_type->kind), tname);
+                emit_ref_temp_decl(ctx, tname, cv->resolved_type);
                 gen_expr(ctx, cv);
                 cg_emit(ctx, ";\n");
                 cg_emit_indent(ctx);
@@ -881,7 +952,9 @@ void gen_stmt(CodegenContext *ctx, ASTNode *node) {
             } else {
                 /* Save to temp, retain if ref type, release scopes, return */
                 int t = ctx->temp_counter++;
-                if (rk == TK_STRUCT && rt->name)
+                if (rk == TK_CLASS && rt->name)
+                    cg_emitf(ctx, "%s *__ret%d = ", rt->name, t);
+                else if (rk == TK_STRUCT && rt->name)
                     cg_emitf(ctx, "%s __ret%d = ", rt->name, t);
                 else if (rk == TK_STRING)
                     cg_emitf(ctx, "%s __ret%d = ", type_to_c(rk), t);
@@ -905,38 +978,71 @@ void gen_stmt(CodegenContext *ctx, ASTNode *node) {
         TypeKind val_kind = val->resolved_type ? val->resolved_type->kind : TK_UNKNOWN;
 
         if (tgt->type == NODE_FIELD_ACCESS) {
-            /* Struct field assignment (value type, uses dot accessor) */
+            /* Field assignment: obj.field = val */
             ASTNode *obj = tgt->data.field_access.object;
             const char *field = tgt->data.field_access.field;
             const char *obj_sn = obj->resolved_type ? obj->resolved_type->name : NULL;
+            TypeKind obj_kind = obj->resolved_type ? obj->resolved_type->kind : TK_UNKNOWN;
 
-            /* Check if field is a string type — needs retain-before-release */
-            StructDef *sd = obj_sn ? lookup_struct(ctx->sem_ctx, obj_sn) : NULL;
+            /* Look up field def for struct/class types */
             StructFieldDef *fd = NULL;
-            if (sd) {
-                for (StructFieldDef *f = sd->fields; f; f = f->next) {
-                    if (strcmp(f->name, field) == 0) { fd = f; break; }
+            if ((obj_kind == TK_STRUCT || obj_kind == TK_CLASS) && obj_sn) {
+                StructDef *sd = lookup_struct(ctx->sem_ctx, obj_sn);
+                if (sd) {
+                    for (StructFieldDef *f = sd->fields; f; f = f->next) {
+                        if (strcmp(f->name, field) == 0) { fd = f; break; }
+                    }
                 }
             }
 
-            if (fd && fd->type && fd->type->kind == TK_STRING) {
-                /* Retain new value before releasing old (handles self-assignment) */
+            if (fd && is_ref_type(fd->type->kind) && obj_kind == TK_CLASS) {
+                /* Class ref-type field: pre-evaluate obj pointer and val */
+                int t_obj = ctx->temp_counter++;
+                int t_val = ctx->temp_counter++;
+                cg_emitf(ctx, "struct %s *__t%d = ", obj_sn, t_obj);
+                gen_expr(ctx, obj);
+                cg_emit(ctx, ";\n");
+                cg_emit_indent(ctx);
+                if (fd->type->kind == TK_CLASS && fd->type->name)
+                    cg_emitf(ctx, "struct %s *__t%d = ", fd->type->name, t_val);
+                else
+                    cg_emitf(ctx, "%s __t%d = ", type_to_c(fd->type->kind), t_val);
+                gen_expr(ctx, val);
+                cg_emit(ctx, ";\n");
+                cg_emit_indent(ctx);
+                /* retain-before-release for self-assignment safety */
                 if (!val || !val->is_fresh_alloc) {
-                    cg_emitf(ctx, "__zn_str_retain(");
-                    gen_expr(ctx, val);
-                    cg_emit(ctx, ");\n");
+                    emit_retain_open(ctx, fd->type);
+                    cg_emitf(ctx, "__t%d);\n", t_val);
                     cg_emit_indent(ctx);
                 }
-                cg_emitf(ctx, "__zn_str_release(");
+                emit_release_open(ctx, fd->type);
+                cg_emitf(ctx, "__t%d->%s);\n", t_obj, field);
+                cg_emit_indent(ctx);
+                cg_emitf(ctx, "__t%d->%s = __t%d;\n", t_obj, field, t_val);
+            } else if (fd && is_ref_type(fd->type->kind) && obj_kind == TK_STRUCT) {
+                /* Struct ref-type field: obj is an lvalue, only pre-evaluate val */
+                int t_val = ctx->temp_counter++;
+                if (fd->type->kind == TK_CLASS && fd->type->name)
+                    cg_emitf(ctx, "struct %s *__t%d = ", fd->type->name, t_val);
+                else
+                    cg_emitf(ctx, "%s __t%d = ", type_to_c(fd->type->kind), t_val);
+                gen_expr(ctx, val);
+                cg_emit(ctx, ";\n");
+                cg_emit_indent(ctx);
+                /* retain-before-release for self-assignment safety */
+                if (!val || !val->is_fresh_alloc) {
+                    emit_retain_open(ctx, fd->type);
+                    cg_emitf(ctx, "__t%d);\n", t_val);
+                    cg_emit_indent(ctx);
+                }
+                emit_release_open(ctx, fd->type);
                 gen_expr(ctx, obj);
                 cg_emitf(ctx, ".%s);\n", field);
                 cg_emit_indent(ctx);
                 gen_expr(ctx, obj);
-                cg_emitf(ctx, ".%s = ", field);
-                gen_expr(ctx, val);
-                cg_emit(ctx, ";\n");
+                cg_emitf(ctx, ".%s = __t%d;\n", field, t_val);
             } else {
-                /* Non-ref field or no type info: just assign */
                 gen_expr(ctx, node);
                 cg_emit(ctx, ";\n");
             }
@@ -947,17 +1053,43 @@ void gen_stmt(CodegenContext *ctx, ASTNode *node) {
         const char *name = tgt->data.ident.name;
         Type *vtype = val->resolved_type;
         if (vtype && is_ref_type(val_kind)) {
-            /* String: release-assign-retain */
-            emit_release_call(ctx, name, vtype);
-            cg_emit(ctx, ";\n");
-            cg_emit_indent(ctx);
-            cg_emitf(ctx, "%s = ", name);
-            gen_expr(ctx, val);
-            cg_emit(ctx, ";\n");
-            if (!val->is_fresh_alloc) {
-                cg_emit_indent(ctx);
-                emit_retain_call(ctx, name, vtype);
+            if (val_kind == TK_CLASS) {
+                /* Class: retain-before-release for self-assignment safety */
+                if (!val->is_fresh_alloc) {
+                    /* Pre-evaluate val to avoid double evaluation */
+                    int t = ctx->temp_counter++;
+                    cg_emitf(ctx, "struct %s *__t%d = ", vtype->name, t);
+                    gen_expr(ctx, val);
+                    cg_emit(ctx, ";\n");
+                    cg_emit_indent(ctx);
+                    emit_retain_open(ctx, vtype);
+                    cg_emitf(ctx, "__t%d);\n", t);
+                    cg_emit_indent(ctx);
+                    emit_release_call(ctx, name, vtype);
+                    cg_emit(ctx, ";\n");
+                    cg_emit_indent(ctx);
+                    cg_emitf(ctx, "%s = __t%d;\n", name, t);
+                } else {
+                    emit_release_call(ctx, name, vtype);
+                    cg_emit(ctx, ";\n");
+                    cg_emit_indent(ctx);
+                    cg_emitf(ctx, "%s = ", name);
+                    gen_expr(ctx, val);
+                    cg_emit(ctx, ";\n");
+                }
+            } else {
+                /* String/Array/Hash: release-assign-retain */
+                emit_release_call(ctx, name, vtype);
                 cg_emit(ctx, ";\n");
+                cg_emit_indent(ctx);
+                cg_emitf(ctx, "%s = ", name);
+                gen_expr(ctx, val);
+                cg_emit(ctx, ";\n");
+                if (!val->is_fresh_alloc) {
+                    cg_emit_indent(ctx);
+                    emit_retain_call(ctx, name, vtype);
+                    cg_emit(ctx, ";\n");
+                }
             }
         } else {
             gen_expr(ctx, node);
@@ -991,15 +1123,23 @@ void gen_func_proto(CodegenContext *ctx, ASTNode *func, int to_header) {
     FILE *out = to_header ? ctx->h_file : ctx->c_file;
 
     const char *ret_str;
+    int ret_is_class = 0;
     if (strcmp(func->data.func_def.name, "main") == 0) {
         ret_str = "int";
+    } else if (ret_type == TK_CLASS && sym && sym->type->name) {
+        ret_is_class = 1;
+        ret_str = sym->type->name;
     } else if (ret_type == TK_STRUCT && sym && sym->type->name) {
         ret_str = sym->type->name;
     } else {
         ret_str = type_to_c(ret_type);
     }
 
-    fprintf(out, "%s %s(", ret_str, func->data.func_def.name);
+    if (ret_is_class) {
+        fprintf(out, "%s *%s(", ret_str, func->data.func_def.name);
+    } else {
+        fprintf(out, "%s %s(", ret_str, func->data.func_def.name);
+    }
 
     int first = 1;
     for (NodeList *p = func->data.func_def.params; p; p = p->next) {
@@ -1008,8 +1148,17 @@ void gen_func_proto(CodegenContext *ctx, ASTNode *func, int to_header) {
         const char *opt = ti->is_optional ? opt_type_for(ti->kind) : NULL;
         if (opt) {
             fprintf(out, "const %s %s", opt, p->node->data.param.name);
+        } else if (ti->kind == TK_CLASS && ti->name) {
+            /* Object type (resolve_type_info sets kind to TK_CLASS) */
+            fprintf(out, "%s *%s", ti->name, p->node->data.param.name);
         } else if (ti->kind == TK_STRUCT && ti->name) {
-            fprintf(out, "const %s %s", ti->name, p->node->data.param.name);
+            StructDef *psd = lookup_struct(ctx->sem_ctx, ti->name);
+            if (psd && psd->is_class) {
+                /* Named class (parser creates TK_STRUCT, semantic resolves to class) */
+                fprintf(out, "%s *%s", ti->name, p->node->data.param.name);
+            } else {
+                fprintf(out, "const %s %s", ti->name, p->node->data.param.name);
+            }
         } else {
             fprintf(out, "const %s %s", type_to_c(ti->kind),
                     p->node->data.param.name);
@@ -1065,6 +1214,20 @@ void gen_func_body(CodegenContext *ctx, ASTNode *block, TypeKind ret_type) {
             if (!last_node->is_fresh_alloc) {
                 cg_emit_indent(ctx);
                 cg_emitf(ctx, "__zn_str_retain(__ret%d);\n", t);
+            }
+            emit_scope_releases(ctx);
+            cg_emit_indent(ctx);
+            cg_emitf(ctx, "return __ret%d;\n", t);
+        } else if (ret_type == TK_CLASS && last_node->resolved_type &&
+                   last_node->resolved_type->name) {
+            int t = ctx->temp_counter++;
+            cg_emit_indent(ctx);
+            cg_emitf(ctx, "%s *__ret%d = ", last_node->resolved_type->name, t);
+            gen_expr(ctx, last_node);
+            cg_emit(ctx, ";\n");
+            if (!last_node->is_fresh_alloc) {
+                cg_emit_indent(ctx);
+                cg_emitf(ctx, "__%s_retain(__ret%d);\n", last_node->resolved_type->name, t);
             }
             emit_scope_releases(ctx);
             cg_emit_indent(ctx);

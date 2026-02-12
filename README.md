@@ -415,6 +415,66 @@ func make_point(x: int, y: int) {
 
 Parameters are passed by value (copied). Struct types are used in type annotations by name.
 
+### Classes
+
+Classes are reference types with automatic reference counting (ARC). Like structs, each field is declared with `let` (immutable) or `var` (mutable).
+
+```
+class Point {
+    var x: int
+    var y: int
+}
+
+class Color {
+    let red: int
+    let green: int
+    let blue: int
+}
+```
+
+Classes are instantiated using named arguments, just like structs:
+
+```
+var p = Point(x: 10, y: 20)
+let c = Color(red: 255, green: 128, blue: 0)
+```
+
+**Reference semantics:** Classes are heap-allocated and reference-counted. Assignment copies the reference, not the value:
+
+```
+var a = Point(x: 1, y: 2)
+var b = a          # b points to the same object as a
+b.x = 99
+# a.x is now also 99
+```
+
+**Per-field mutability with reference rules:** Unlike structs (value types), a `let` binding on a class variable only prevents reassignment — `var` fields are still mutable through the reference:
+
+```
+let p = Point(x: 1, y: 2)
+p.x = 10          # OK: var field, reference type
+p = Point(x: 3, y: 4)  # Error: let binding prevents reassignment
+
+var c = Color(red: 255, green: 0, blue: 0)
+c.red = 128        # Error: let field prevents mutation
+```
+
+Fields can have default values:
+
+```
+class Config {
+    var width: int
+    var height: int
+    var debug = false
+}
+
+var cfg = Config(width: 800, height: 600)  # debug defaults to false
+```
+
+**Memory management** is automatic. Objects are freed when their reference count reaches zero. No manual memory management is needed.
+
+> **Note:** ARC does not detect reference cycles. Avoid creating objects that reference each other in a cycle, as they will not be freed.
+
 ### Built-in Functions
 
 #### print
@@ -430,7 +490,7 @@ Takes exactly one `String` argument. Use string interpolation and escape sequenc
 
 ### Program Structure
 
-A Zinc program is a series of `func` and `struct` definitions. Execution starts at `main`.
+A Zinc program is a series of `func`, `struct`, and `class` definitions. Execution starts at `main`.
 
 ```
 func helper(x: int) {

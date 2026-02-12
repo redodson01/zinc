@@ -61,7 +61,7 @@ int type_eq(const Type *a, const Type *b) {
     if (!a || !b) return 0;
     if (a->kind != b->kind) return 0;
     if (a->is_optional != b->is_optional) return 0;
-    if (a->kind == TK_STRUCT) {
+    if (a->kind == TK_STRUCT || a->kind == TK_CLASS) {
         if (!a->name || !b->name) return a->name == b->name;
         return strcmp(a->name, b->name) == 0;
     }
@@ -348,6 +348,10 @@ static void print_type_info(TypeInfo *ti) {
         if (ti->name) printf("%s", ti->name);
         else printf("struct");
         break;
+    case TK_CLASS:
+        if (ti->name) printf("%s", ti->name);
+        else printf("class");
+        break;
     default:        printf("unknown"); break;
     }
     if (ti->is_optional) printf("?");
@@ -499,7 +503,8 @@ void print_ast(ASTNode *node, int indent) {
         print_ast(node->data.optional_check.operand, indent + 1);
         break;
     case NODE_TYPE_DEF:
-        printf("StructDef: %s\n", node->data.type_def.name);
+        printf("%s: %s\n", node->data.type_def.is_class ? "ClassDef" : "StructDef",
+               node->data.type_def.name);
         for (NodeList *l = node->data.type_def.fields; l; l = l->next)
             print_ast(l->node, indent + 1);
         break;

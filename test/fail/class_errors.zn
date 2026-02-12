@@ -1,0 +1,21 @@
+# ERRORS: 2
+# Tests: class already defined, duplicate field in class
+
+class Node {
+    var value: int
+}
+
+# Error 1: class already defined
+class Node {
+    var x: int
+}
+
+# Error 2: duplicate field
+class Bad {
+    var x: int
+    var x: int
+}
+
+func main() {
+    0
+}

@@ -1,0 +1,13 @@
+class Named {
+    var name: String
+}
+
+func main() {
+    var obj = Named(name: "start")
+    var i = 0
+    while i < 100000 {
+        obj.name = "iter" + " " + "val"
+        i = i + 1
+    }
+    0
+}

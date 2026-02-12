@@ -5,7 +5,7 @@
 #include "semantic.h"
 
 static int is_ref_type(TypeKind t) {
-    return t == TK_STRING;
+    return t == TK_STRING || t == TK_CLASS;
 }
 
 /* Variadic error reporting with line numbers */
@@ -153,12 +153,26 @@ static int is_always_true(ASTNode *expr) {
     if (!expr) return 0;
     /* Direct `true` literal */
     if (expr->type == NODE_BOOL && expr->data.bval) return 1;
-    /* `!false` -- produced by `until false` -> `while (!false)` */
+    /* `!false` — produced by `until false` → `while (!false)` */
     if (expr->type == NODE_UNARYOP && expr->data.unaryop.op == OP_NOT) {
         ASTNode *inner = expr->data.unaryop.operand;
         if (inner && inner->type == NODE_BOOL && !inner->data.bval) return 1;
     }
     return 0;
+}
+
+/* Check if expression is definitively void (extern void func) */
+static int is_definitely_void(SemanticContext *ctx, ASTNode *expr) {
+    if (!expr) return 0;
+    if (expr->type != NODE_CALL) return 0;
+    Symbol *sym = lookup(ctx, expr->data.call.name);
+    return (sym && sym->is_function && sym->is_extern && sym->type->kind == TK_VOID);
+}
+
+static void check_not_void(SemanticContext *ctx, int line, ASTNode *expr, const char *context) {
+    if (is_definitely_void(ctx, expr)) {
+        semantic_errorf(ctx, line, "cannot use void expression %s", context);
+    }
 }
 
 /* Human-readable type names for error messages */
@@ -171,11 +185,12 @@ static const char *type_kind_name(TypeKind t) {
     case TK_CHAR:   return "char";
     case TK_VOID:   return "void";
     case TK_STRUCT: return "struct";
+    case TK_CLASS:  return "class";
     default:        return "unknown";
     }
 }
 
-/* Type inference -- sets resolved_type on nodes */
+/* Type inference — sets resolved_type on nodes */
 Type *get_expr_type(SemanticContext *ctx, ASTNode *expr) {
     static Type void_type = {TK_VOID, 0, NULL};
     if (!expr) return &void_type;
@@ -262,7 +277,7 @@ Type *get_expr_type(SemanticContext *ctx, ASTNode *expr) {
             type_free(expr->resolved_type);
             expr->resolved_type = type_clone(sym->type);
             TypeKind rk = sym->type->kind;
-            if (rk == TK_STRING)
+            if (rk == TK_STRING || rk == TK_CLASS)
                 expr->is_fresh_alloc = 1;
             return expr->resolved_type;
         }
@@ -287,6 +302,9 @@ Type *get_expr_type(SemanticContext *ctx, ASTNode *expr) {
         break;
     case NODE_OPTIONAL_CHECK:
         result = TK_BOOL;
+        break;
+    case NODE_NAMED_ARG:
+        result = get_expr_type(ctx, expr->data.named_arg.value)->kind;
         break;
     case NODE_IF:
     case NODE_WHILE:
@@ -325,19 +343,21 @@ static StructFieldDef *check_lvalue(SemanticContext *ctx, ASTNode *tgt, int line
             semantic_errorf(ctx, line, "undefined variable '%s'", tgt->data.ident.name);
         } else if (sym->is_const) {
             semantic_errorf(ctx, line, "cannot %s constant '%s'", verb, tgt->data.ident.name);
+        } else if (sym->is_extern) {
+            semantic_errorf(ctx, line, "cannot %s extern '%s'", verb, tgt->data.ident.name);
         }
     } else if (tgt->type == NODE_FIELD_ACCESS) {
         ASTNode *obj = tgt->data.field_access.object;
         TypeKind obj_kind = obj->resolved_type ? obj->resolved_type->kind : TK_UNKNOWN;
         const char *obj_sn = obj->resolved_type ? obj->resolved_type->name : NULL;
-        if (obj_kind == TK_STRUCT && obj_sn) {
+        if ((obj_kind == TK_STRUCT || obj_kind == TK_CLASS) && obj_sn) {
             StructDef *fsd = lookup_struct(ctx, obj_sn);
             if (fsd) {
                 StructFieldDef *fd = lookup_struct_field(fsd, tgt->data.field_access.field);
                 if (fd && fd->is_const)
                     semantic_errorf(ctx, line, "cannot %s immutable field '%s'",
                                     verb, tgt->data.field_access.field);
-                if (fd) {
+                if (fd && obj_kind != TK_CLASS) {
                     /* Binding immutability for value types */
                     ASTNode *cur = obj;
                     while (cur->type == NODE_FIELD_ACCESS)
@@ -379,13 +399,17 @@ static void analyze_expr(SemanticContext *ctx, ASTNode *expr) {
     case NODE_BINOP:
         analyze_expr(ctx, expr->data.binop.left);
         analyze_expr(ctx, expr->data.binop.right);
+        check_not_void(ctx, expr->line, expr->data.binop.left, "as operand");
+        check_not_void(ctx, expr->line, expr->data.binop.right, "as operand");
         break;
     case NODE_UNARYOP:
         analyze_expr(ctx, expr->data.unaryop.operand);
+        check_not_void(ctx, expr->line, expr->data.unaryop.operand, "as operand");
         break;
     case NODE_ASSIGN: {
         analyze_expr(ctx, expr->data.assign.target);
         analyze_expr(ctx, expr->data.assign.value);
+        check_not_void(ctx, expr->line, expr->data.assign.value, "in assignment");
         StructFieldDef *fd = check_lvalue(ctx, expr->data.assign.target, expr->line, "assign to");
         if (fd) {
             type_free(expr->resolved_type);
@@ -396,6 +420,7 @@ static void analyze_expr(SemanticContext *ctx, ASTNode *expr) {
     case NODE_COMPOUND_ASSIGN: {
         analyze_expr(ctx, expr->data.compound_assign.target);
         analyze_expr(ctx, expr->data.compound_assign.value);
+        check_not_void(ctx, expr->line, expr->data.compound_assign.value, "in assignment");
         check_lvalue(ctx, expr->data.compound_assign.target, expr->line, "assign to");
         break;
     }
@@ -431,7 +456,7 @@ static void analyze_expr(SemanticContext *ctx, ASTNode *expr) {
                 }
             }
 
-            /* Check that all required fields (without defaults) are provided. */
+            /* Check that all required fields (without defaults) are provided */
             for (StructFieldDef *fd = sd->fields; fd; fd = fd->next) {
                 if (!fd->has_default) {
                     int found = 0;
@@ -449,9 +474,10 @@ static void analyze_expr(SemanticContext *ctx, ASTNode *expr) {
                 }
             }
 
-            if (!expr->resolved_type) expr->resolved_type = type_new(TK_STRUCT);
-            else expr->resolved_type->kind = TK_STRUCT;
+            if (!expr->resolved_type) expr->resolved_type = type_new(sd->is_class ? TK_CLASS : TK_STRUCT);
+            else expr->resolved_type->kind = sd->is_class ? TK_CLASS : TK_STRUCT;
             expr->resolved_type->name = strdup(name);
+            if (sd->is_class) expr->is_fresh_alloc = 1;
             break;
         }
 
@@ -488,6 +514,7 @@ static void analyze_expr(SemanticContext *ctx, ASTNode *expr) {
         for (NodeList *arg = expr->data.call.args; arg; arg = arg->next) {
             analyze_expr(ctx, arg->node);
             get_expr_type(ctx, arg->node);
+            check_not_void(ctx, expr->line, arg->node, "as function argument");
             arg_count++;
         }
 
@@ -532,9 +559,9 @@ static void analyze_expr(SemanticContext *ctx, ASTNode *expr) {
             break;
         }
 
-        /* Struct field access */
+        /* Struct/class field access */
         const char *obj_struct_name = (obj->resolved_type) ? obj->resolved_type->name : NULL;
-        if (obj_kind != TK_STRUCT || !obj_struct_name) {
+        if ((obj_kind != TK_STRUCT && obj_kind != TK_CLASS) || !obj_struct_name) {
             if (obj_kind != TK_UNKNOWN)
                 semantic_errorf(ctx, expr->line, "field access on non-struct type");
             break;
@@ -589,8 +616,8 @@ static void analyze_expr(SemanticContext *ctx, ASTNode *expr) {
             if (sym) is_opt = sym->type->is_optional;
         }
 
-        /* Reference types (String) are always checkable (NULL-based) */
-        if (!is_opt && ot != TK_STRING) {
+        /* Reference types (String, classes) are always checkable (NULL-based) */
+        if (!is_opt && ot != TK_STRING && ot != TK_CLASS) {
             semantic_errorf(ctx, expr->line, "cannot use '?' on non-optional type");
         }
 
@@ -626,12 +653,14 @@ static void analyze_stmt(SemanticContext *ctx, ASTNode *node) {
     switch (node->type) {
     case NODE_DECL: {
         analyze_expr(ctx, node->data.decl.value);
+        check_not_void(ctx, node->line, node->data.decl.value, "as initializer");
         Type *type = get_expr_type(ctx, node->data.decl.value);
         add_symbol(ctx, node->line, node->data.decl.name, type, node->data.decl.is_const);
         break;
     }
     case NODE_IF: {
         analyze_expr(ctx, node->data.if_expr.cond);
+        check_not_void(ctx, node->line, node->data.if_expr.cond, "as condition");
 
         /* Type narrowing: if the condition is `x?` where x is optional,
            create a narrowed (non-optional) shadow in the then block */
@@ -688,8 +717,8 @@ static void analyze_stmt(SemanticContext *ctx, ASTNode *node) {
                 if (!node->resolved_type) node->resolved_type = type_new(then_t);
                 else node->resolved_type->kind = then_t;
                 if (is_ref_type(then_t)) node->is_fresh_alloc = 1;
-                /* Propagate struct name for struct-typed if/else */
-                if (then_t == TK_STRUCT && then_b->type == NODE_BLOCK && then_b->data.block.stmts) {
+                /* Propagate struct/class name for struct/class-typed if/else */
+                if ((then_t == TK_STRUCT || then_t == TK_CLASS) && then_b->type == NODE_BLOCK && then_b->data.block.stmts) {
                     NodeList *tl = then_b->data.block.stmts;
                     while (tl->next) tl = tl->next;
                     if (tl->node && tl->node->resolved_type && tl->node->resolved_type->name) {
@@ -716,6 +745,7 @@ static void analyze_stmt(SemanticContext *ctx, ASTNode *node) {
     }
     case NODE_WHILE: {
         analyze_expr(ctx, node->data.while_expr.cond);
+        check_not_void(ctx, node->line, node->data.while_expr.cond, "as condition");
         Type *saved_lrt = ctx->loop_result_type;
         int saved_lrs = ctx->loop_result_set;
         ctx->loop_result_type = NULL;
@@ -744,6 +774,7 @@ static void analyze_stmt(SemanticContext *ctx, ASTNode *node) {
             analyze_stmt(ctx, node->data.for_expr.init);
         }
         analyze_expr(ctx, node->data.for_expr.cond);
+        check_not_void(ctx, node->line, node->data.for_expr.cond, "as condition");
         if (node->data.for_expr.update) {
             analyze_expr(ctx, node->data.for_expr.update);
         }
@@ -806,14 +837,16 @@ static void analyze_stmt(SemanticContext *ctx, ASTNode *node) {
         }
         break;
     case NODE_TYPE_DEF: {
+        int is_class = node->data.type_def.is_class;
         const char *def_name = node->data.type_def.name;
         if (lookup_struct(ctx, def_name)) {
-            semantic_errorf(ctx, node->line, "struct '%s' already defined", def_name);
+            semantic_errorf(ctx, node->line, "%s '%s' already defined",
+                            is_class ? "class" : "struct", def_name);
             break;
         }
         StructDef *sd = calloc(1, sizeof(StructDef));
         sd->name = strdup(def_name);
-        sd->is_class = 0;
+        sd->is_class = is_class;
         unsigned int si = hash_struct_name(def_name);
         sd->next = ctx->struct_buckets[si];
         ctx->struct_buckets[si] = sd;
@@ -828,8 +861,9 @@ static void analyze_stmt(SemanticContext *ctx, ASTNode *node) {
             /* Check for duplicate fields */
             for (StructFieldDef *existing = fields_head; existing; existing = existing->next) {
                 if (strcmp(existing->name, field->data.struct_field.name) == 0) {
-                    semantic_errorf(ctx, field->line, "duplicate field '%s' in struct '%s'",
-                                    field->data.struct_field.name, def_name);
+                    semantic_errorf(ctx, field->line, "duplicate field '%s' in %s '%s'",
+                                    field->data.struct_field.name,
+                                    is_class ? "class" : "struct", def_name);
                 }
             }
 
@@ -847,6 +881,11 @@ static void analyze_stmt(SemanticContext *ctx, ASTNode *node) {
                     }
                 }
                 fd->type = type_from_info(fti);
+                /* Resolve struct that is actually a class */
+                if (sn) {
+                    StructDef *fsd = lookup_struct(ctx, sn);
+                    if (fsd && fsd->is_class) fd->type->kind = TK_CLASS;
+                }
                 fd->has_default = 0;
             } else if (field->data.struct_field.default_value) {
                 analyze_expr(ctx, field->data.struct_field.default_value);
@@ -881,6 +920,11 @@ static void analyze_stmt(SemanticContext *ctx, ASTNode *node) {
             int i = 0;
             for (NodeList *p = node->data.func_def.params; p; p = p->next, i++) {
                 param_types[i] = type_from_info(p->node->data.param.type_info);
+                /* Resolve struct that is actually a class */
+                if (param_types[i]->kind == TK_STRUCT && p->node->data.param.type_info->name) {
+                    StructDef *psd = lookup_struct(ctx, p->node->data.param.type_info->name);
+                    if (psd && psd->is_class) param_types[i]->kind = TK_CLASS;
+                }
             }
         }
 
@@ -901,6 +945,11 @@ static void analyze_stmt(SemanticContext *ctx, ASTNode *node) {
         for (NodeList *p = node->data.func_def.params; p; p = p->next) {
             TypeInfo *ti = p->node->data.param.type_info;
             Type *ptype = type_from_info(ti);
+            /* Resolve struct that is actually a class */
+            if (ptype->kind == TK_STRUCT && ti->name) {
+                StructDef *psd = lookup_struct(ctx, ti->name);
+                if (psd && psd->is_class) ptype->kind = TK_CLASS;
+            }
             add_symbol(ctx, p->node->line, p->node->data.param.name, ptype, 1);
             type_free(ptype);
         }

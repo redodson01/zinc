@@ -1,0 +1,14 @@
+class Box {
+    var value: int
+}
+
+func main() {
+    var i = 0
+    while i < 100000 {
+        var b = while true {
+            break Box(value: i)
+        }
+        i = i + 1
+    }
+    0
+}

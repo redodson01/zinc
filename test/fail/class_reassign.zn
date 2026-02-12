@@ -1,0 +1,12 @@
+# ERRORS: 1
+
+class Point {
+    var x: int
+    var y: int
+}
+
+func main() {
+    let p = Point(x: 1, y: 2)
+    p = Point(x: 3, y: 4)
+    0
+}

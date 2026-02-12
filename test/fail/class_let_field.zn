@@ -1,0 +1,14 @@
+# ERRORS: 2
+
+class Color {
+    let red: int
+    let green: int
+    let blue: int
+}
+
+func main() {
+    var c = Color(red: 255, green: 128, blue: 0)
+    c.red = 100
+    c.green = 50
+    0
+}
