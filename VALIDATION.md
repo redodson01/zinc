@@ -4,7 +4,7 @@ Four claims define correctness for the Zinc project. All four must hold at all t
 
 ## 1. All documented features are fully implemented
 
-Every feature described in the README has working support across the full compilation pipeline: scanning (`scanner.l`), parsing (`parser.y`), AST construction (`ast.h`/`ast.c`), semantic analysis (`semantic.c`), and code generation (`codegen.c`, `codegen_expr.c`, `codegen_types.c`).
+Every feature described in the README has working support across the full compilation pipeline: scanning (`lib/zinc/scanner.rb`), parsing (`lib/zinc/parser.ry`), AST construction (`lib/zinc/ast.rb`), semantic analysis (`lib/zinc/semantic.rb`), and code generation (`lib/zinc/codegen.rb`, `lib/zinc/codegen_expr.rb`, `lib/zinc/codegen_types.rb`).
 
 **Verify:** For each README section, confirm that the described syntax parses, type-checks, and transpiles to working C. Cross-reference against pass tests — every feature should have at least one test that exercises it end-to-end.
 
@@ -18,7 +18,7 @@ Every feature described in the README has working support across the full compil
 
 **Verify:**
 ```bash
-make clean && make && make test-all
+make test-all
 ```
 
 Expected output (current counts):
@@ -60,7 +60,7 @@ git range-diff origin/main...main    # Compare with remote
 Spot-check intermediate commits:
 ```bash
 git show <hash>:README.md | head -20   # README matches features at that point
-git stash && git checkout <hash> && make clean && make && make test-all   # Builds and passes
+git stash && git checkout <hash> && make test-all   # Builds and passes
 ```
 
 **If it fails:** See `REBUILD.md` for the history rewrite process.

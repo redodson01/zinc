@@ -1,0 +1,111 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+$LOAD_PATH.unshift(File.join(__dir__, '..', 'lib'))
+
+require 'optparse'
+require 'fileutils'
+require 'zinc/scanner'
+require 'zinc/parser'
+
+mode = :codegen
+output_base = nil
+input_file = nil
+
+opts = OptionParser.new do |o|
+  o.banner = "Usage: zinc [options] <input.zn>"
+  o.on('--ast', 'Print AST only') { mode = :ast }
+  o.on('--check', 'Type check only') { mode = :check }
+  o.on('-c', '--compile', 'Compile to executable') { mode = :compile }
+  o.on('-o FILE', 'Output base name') { |f| output_base = f }
+  o.on('-h', '--help', 'Show help') { $stderr.puts o; exit 0 }
+end
+
+begin
+  opts.parse!(ARGV)
+rescue OptionParser::InvalidOption => e
+  $stderr.puts e.message
+  $stderr.puts opts
+  exit 1
+end
+
+input_file = ARGV.shift
+source = if input_file
+  File.read(input_file)
+else
+  $stdin.read
+end
+
+parser = Zinc::Parser.new
+ast, nerrs = parser.parse(source, input_file)
+
+if nerrs > 0
+  $stderr.puts "\n#{nerrs} parse error(s) encountered."
+  exit 1
+end
+
+if mode == :ast
+  puts "=== Abstract Syntax Tree ===\n\n"
+  ast.print_ast(0)
+  exit 0
+end
+
+# Semantic analysis
+require 'zinc/semantic'
+sem = Zinc::Semantic.new
+sem_errors = sem.analyze(ast)
+
+if sem_errors > 0
+  $stderr.puts "\n#{sem_errors} semantic error(s) encountered."
+  exit 1
+end
+
+if mode == :check
+  puts "Type checking passed."
+  exit 0
+end
+
+# Code generation
+require 'zinc/codegen'
+require 'zinc/codegen_expr'
+require 'zinc/codegen_types'
+
+output_base ||= if input_file
+  base = File.basename(input_file, '.zn')
+  base
+else
+  'output'
+end
+
+c_filename = "#{output_base}.c"
+h_filename = "#{output_base}.h"
+
+c_file = File.open(c_filename, 'w')
+h_file = File.open(h_filename, 'w')
+
+cg = Zinc::Codegen.new(c_file, h_file, sem, output_base, input_file || '<stdin>')
+cg.generate(ast)
+
+c_file.close
+h_file.close
+
+# Copy zinc_runtime.h to output directory
+runtime_src = File.join(__dir__, '..', 'src', 'zinc_runtime.h')
+output_dir = File.dirname(output_base) == '.' ? '.' : File.dirname(output_base)
+runtime_dst = File.join(output_dir, 'zinc_runtime.h')
+begin
+  FileUtils.cp(runtime_src, runtime_dst)
+rescue => e
+  $stderr.puts "Warning: Could not copy zinc_runtime.h: #{e.message}"
+end
+puts "Generated #{c_filename}, #{h_filename}, and #{runtime_dst}"
+
+if mode == :compile
+  compile_cmd = "gcc -Wall -o \"#{output_base}\" \"#{c_filename}\""
+  puts "Compiling: #{compile_cmd}"
+  unless system(compile_cmd)
+    $stderr.puts "Compilation failed"
+    exit 1
+  end
+  puts "Created executable: #{output_base}"
+end

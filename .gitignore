@@ -1,2 +1,2 @@
 # Build artifacts
-build/
+lib/zinc/parser.rb

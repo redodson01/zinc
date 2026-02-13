@@ -1,0 +1,539 @@
+class Zinc::Parser
+
+prechigh
+  left DOT LBRACKET QUESTION
+  left INCREMENT DECREMENT
+  right NOT UMINUS UPLUS PREFIX_INCDEC
+  left STAR SLASH PERCENT
+  left PLUS MINUS
+  left LT GT LE GE
+  left EQ NE
+  left AND
+  left OR
+  right ASSIGN PLUS_ASSIGN MINUS_ASSIGN STAR_ASSIGN SLASH_ASSIGN PERCENT_ASSIGN
+  right BREAK CONTINUE RETURN
+preclow
+
+expect 9
+
+token INT_LIT FLOAT_LIT BOOL_LIT CHAR_LIT
+      STRING_LIT STRING_PART STRING_TAIL IDENTIFIER
+      LET VAR
+      TYPE_INT TYPE_FLOAT TYPE_STRING TYPE_BOOL TYPE_CHAR
+      IF UNLESS ELSE
+      WHILE UNTIL FOR
+      BREAK CONTINUE
+      FUNC RETURN STRUCT CLASS EXTERN ARROW WEAK
+      EQ NE LE GE AND OR
+      PLUS_ASSIGN MINUS_ASSIGN STAR_ASSIGN SLASH_ASSIGN PERCENT_ASSIGN
+      INCREMENT DECREMENT
+      LPAREN RPAREN LBRACE RBRACE LBRACKET RBRACKET
+      COMMA SEMICOLON COLON DOT QUESTION
+      PLUS MINUS STAR SLASH PERCENT LT GT ASSIGN NOT
+
+rule
+
+  program
+    : top_level_list { result = n(AST::Program, val[0]) }
+    ;
+
+  top_level_list
+    : func_def                        { result = [val[0]] }
+    | struct_def                      { result = [val[0]] }
+    | class_def                       { result = [val[0]] }
+    | extern_block                    { result = [val[0]] }
+    | top_level_list func_def         { result = val[0] << val[1] }
+    | top_level_list struct_def       { result = val[0] << val[1] }
+    | top_level_list class_def        { result = val[0] << val[1] }
+    | top_level_list extern_block     { result = val[0] << val[1] }
+    ;
+
+  func_def
+    : FUNC IDENTIFIER LPAREN param_list RPAREN block
+        { result = nl(AST::FuncDef, val[0], val[1].to_s, val[3], val[5]) }
+    ;
+
+  extern_block
+    : EXTERN LBRACE extern_decl_list RBRACE
+        { result = nl(AST::ExternBlock, val[0], val[2]) }
+    ;
+
+  extern_decl_list
+    : extern_decl                       { result = [val[0]] }
+    | extern_decl_list extern_decl      { result = val[0] << val[1] }
+    ;
+
+  extern_decl
+    : LET IDENTIFIER COLON type_spec
+        { result = nl(AST::ExternLet, val[0], val[1], val[3]) }
+    | VAR IDENTIFIER COLON type_spec
+        { result = nl(AST::ExternVar, val[0], val[1], val[3]) }
+    | FUNC IDENTIFIER LPAREN param_list RPAREN
+        { result = nl(AST::ExternFunc, val[0], val[1], val[3], nil) }
+    | FUNC IDENTIFIER LPAREN param_list RPAREN ARROW type_spec
+        { result = nl(AST::ExternFunc, val[0], val[1], val[3], val[6]) }
+    ;
+
+  param_list
+    : /* empty */                       { result = [] }
+    | param                             { result = [val[0]] }
+    | param_list COMMA param            { result = val[0] << val[2] }
+    ;
+
+  param
+    : IDENTIFIER COLON type_spec
+        { result = nl(AST::Param, val[0], val[0], val[2]) }
+    ;
+
+  type_spec
+    : TYPE_INT                          { result = TypeInfo.new(TK_INT) }
+    | TYPE_FLOAT                        { result = TypeInfo.new(TK_FLOAT) }
+    | TYPE_STRING                       { result = TypeInfo.new(TK_STRING) }
+    | TYPE_BOOL                         { result = TypeInfo.new(TK_BOOL) }
+    | TYPE_CHAR                         { result = TypeInfo.new(TK_CHAR) }
+    | IDENTIFIER                        { result = TypeInfo.new(TK_STRUCT); result.name = val[0].to_s }
+    | LBRACE object_type_fields RBRACE
+        { result = TypeInfo.new(TK_STRUCT); result.fields = val[1]; result.is_object = true }
+    | type_spec LBRACKET RBRACKET
+        { result = TypeInfo.new(TK_ARRAY); result.elem = val[0] }
+    | LBRACKET type_spec COLON type_spec RBRACKET
+        { result = TypeInfo.new(TK_HASH); result.key = val[1]; result.elem = val[3] }
+    | type_spec QUESTION
+        { val[0].is_optional = true; result = val[0] }
+    | LPAREN tuple_type_elems RPAREN
+        { result = TypeInfo.new(TK_STRUCT); result.is_tuple = true; result.fields = val[1] }
+    ;
+
+  tuple_type_elems
+    : tuple_type_elem COMMA tuple_type_elem
+        { val[0].next = val[2]; result = val[0] }
+    | tuple_type_elems COMMA tuple_type_elem
+        { result = Zinc.type_info_field_append(val[0], val[2]) }
+    ;
+
+  tuple_type_elem
+    : IDENTIFIER COLON type_spec        { result = TypeInfoField.new(val[0].to_s, val[2]) }
+    | type_spec                         { result = TypeInfoField.new(nil, val[0]) }
+    ;
+
+  object_type_fields
+    : object_type_field                           { result = val[0] }
+    | object_type_fields COMMA object_type_field  { result = Zinc.type_info_field_append(val[0], val[2]) }
+    ;
+
+  object_type_field
+    : IDENTIFIER COLON type_spec  { result = TypeInfoField.new(val[0].to_s, val[2]) }
+    ;
+
+  type_kw
+    : TYPE_INT                          { result = [TK_INT, lval(val[0])] }
+    | TYPE_FLOAT                        { result = [TK_FLOAT, lval(val[0])] }
+    | TYPE_STRING                       { result = [TK_STRING, lval(val[0])] }
+    | TYPE_BOOL                         { result = [TK_BOOL, lval(val[0])] }
+    | TYPE_CHAR                         { result = [TK_CHAR, lval(val[0])] }
+    ;
+
+  block
+    : LBRACE expr_list RBRACE           { result = AST::Block.new(val[1]) }
+    ;
+
+  expr_list
+    : expr                              { result = [val[0]] }
+    | expr_list expr                    { result = val[0] << val[1] }
+    ;
+
+  expr
+    : primary                           { result = val[0] }
+    | VAR IDENTIFIER ASSIGN expr
+        { result = nl(AST::Decl, val[0], val[1], val[3], false) }
+    | LET IDENTIFIER ASSIGN expr
+        { result = nl(AST::Decl, val[0], val[1], val[3], true) }
+    | expr ASSIGN expr
+        { result = nl(AST::Assign, val[0], val[0], val[2]) }
+    | expr PLUS_ASSIGN expr
+        { result = nl(AST::CompoundAssign, val[0], val[0], Op::ADD_ASSIGN, val[2]) }
+    | expr MINUS_ASSIGN expr
+        { result = nl(AST::CompoundAssign, val[0], val[0], Op::SUB_ASSIGN, val[2]) }
+    | expr STAR_ASSIGN expr
+        { result = nl(AST::CompoundAssign, val[0], val[0], Op::MUL_ASSIGN, val[2]) }
+    | expr SLASH_ASSIGN expr
+        { result = nl(AST::CompoundAssign, val[0], val[0], Op::DIV_ASSIGN, val[2]) }
+    | expr PERCENT_ASSIGN expr
+        { result = nl(AST::CompoundAssign, val[0], val[0], Op::MOD_ASSIGN, val[2]) }
+    | INCREMENT primary  =PREFIX_INCDEC
+        { result = nl(AST::IncDec, val[0], val[1], Op::INC, true) }
+    | DECREMENT primary  =PREFIX_INCDEC
+        { result = nl(AST::IncDec, val[0], val[1], Op::DEC, true) }
+    | primary INCREMENT
+        { result = nl(AST::IncDec, val[0], val[0], Op::INC, false) }
+    | primary DECREMENT
+        { result = nl(AST::IncDec, val[0], val[0], Op::DEC, false) }
+    | expr PLUS expr
+        { result = nl(AST::BinOp, val[0], val[0], Op::ADD, val[2]) }
+    | expr MINUS expr
+        { result = nl(AST::BinOp, val[0], val[0], Op::SUB, val[2]) }
+    | expr STAR expr
+        { result = nl(AST::BinOp, val[0], val[0], Op::MUL, val[2]) }
+    | expr SLASH expr
+        { result = nl(AST::BinOp, val[0], val[0], Op::DIV, val[2]) }
+    | expr PERCENT expr
+        { result = nl(AST::BinOp, val[0], val[0], Op::MOD, val[2]) }
+    | expr LT expr
+        { result = nl(AST::BinOp, val[0], val[0], Op::LT, val[2]) }
+    | expr GT expr
+        { result = nl(AST::BinOp, val[0], val[0], Op::GT, val[2]) }
+    | expr LE expr
+        { result = nl(AST::BinOp, val[0], val[0], Op::LE, val[2]) }
+    | expr GE expr
+        { result = nl(AST::BinOp, val[0], val[0], Op::GE, val[2]) }
+    | expr EQ expr
+        { result = nl(AST::BinOp, val[0], val[0], Op::EQ, val[2]) }
+    | expr NE expr
+        { result = nl(AST::BinOp, val[0], val[0], Op::NE, val[2]) }
+    | expr AND expr
+        { result = nl(AST::BinOp, val[0], val[0], Op::AND, val[2]) }
+    | expr OR expr
+        { result = nl(AST::BinOp, val[0], val[0], Op::OR, val[2]) }
+    | MINUS expr  =UMINUS
+        { result = nl(AST::UnaryOp, val[0], Op::NEG, val[1]) }
+    | PLUS expr  =UPLUS
+        { result = nl(AST::UnaryOp, val[0], Op::POS, val[1]) }
+    | NOT expr
+        { result = nl(AST::UnaryOp, val[0], Op::NOT, val[1]) }
+    | expr LBRACKET RBRACKET
+        {
+          if val[0].is_a?(AST::Ident)
+            result = AST::TypedEmptyArray.new(TK_STRUCT, val[0].name.dup)
+            result.line = lval(val[0])
+          else
+            result = val[0]
+          end
+        }
+    | expr LBRACKET expr RBRACKET
+        { result = nl(AST::Index, val[0], val[0], val[2]) }
+    | expr DOT IDENTIFIER
+        { result = nl(AST::FieldAccess, val[0], val[0], val[2].to_s) }
+    | expr DOT INT_LIT
+        {
+          result = AST::FieldAccess.new(val[0], "_#{ival(val[2])}")
+          result.line = lval(val[0])
+          result.is_dot_int = true
+        }
+    | expr QUESTION
+        { result = nl(AST::OptionalCheck, val[0], val[0]) }
+    | IDENTIFIER LPAREN arg_list RPAREN
+        { result = nl(AST::Call, val[0], val[0].to_s, val[2]) }
+    | LPAREN expr RPAREN              { result = val[1] }
+    | LPAREN expr COMMA tuple_rest RPAREN
+        {
+          elems = [val[1]] + val[3]
+          result = AST::Tuple.new(elems); result.line = lval(val[0])
+        }
+    | LPAREN IDENTIFIER COLON expr COMMA named_tuple_rest RPAREN
+        {
+          elems = [AST::NamedArg.new(val[1].to_s, val[3])] + val[5]
+          result = AST::Tuple.new(elems); result.line = lval(val[0])
+        }
+    | LBRACE object_field_list RBRACE
+        { result = AST::ObjectLiteral.new(val[1]); result.line = lval(val[0]) }
+    | if_expr                         { result = val[0] }
+    | unless_expr                     { result = val[0] }
+    | while_expr                      { result = val[0] }
+    | until_expr                      { result = val[0] }
+    | for_expr                        { result = val[0] }
+    | BREAK expr  =BREAK
+        { result = nl(AST::Break, val[0], val[1]) }
+    | CONTINUE expr  =CONTINUE
+        { result = nl(AST::Continue, val[0], val[1]) }
+    | RETURN expr  =RETURN
+        { result = nl(AST::Return, val[0], val[1]) }
+    ;
+
+  if_expr
+    : IF expr block
+        { result = nl(AST::If, val[0], val[1], val[2], nil) }
+    | IF expr block ELSE block
+        { result = nl(AST::If, val[0], val[1], val[2], val[4]) }
+    | IF expr block ELSE if_expr
+        { result = nl(AST::If, val[0], val[1], val[2], val[4]) }
+    ;
+
+  unless_expr
+    : UNLESS expr block
+        { result = nl(AST::If, val[0], AST::UnaryOp.new(Op::NOT, val[1]), val[2], nil) }
+    | UNLESS expr block ELSE block
+        { result = nl(AST::If, val[0], AST::UnaryOp.new(Op::NOT, val[1]), val[2], val[4]) }
+    ;
+
+  while_expr
+    : WHILE expr block
+        { result = nl(AST::While, val[0], val[1], val[2]) }
+    ;
+
+  until_expr
+    : UNTIL expr block
+        { result = nl(AST::While, val[0], AST::UnaryOp.new(Op::NOT, val[1]), val[2]) }
+    ;
+
+  for_expr
+    : FOR for_init SEMICOLON expr SEMICOLON for_update block
+        { result = nl(AST::For, val[0], val[1], val[3], val[5], val[6]) }
+    ;
+
+  for_init
+    : /* empty */                       { result = nil }
+    | VAR IDENTIFIER ASSIGN expr
+        { result = nl(AST::Decl, val[0], val[1].to_s, val[3], false) }
+    | LET IDENTIFIER ASSIGN expr
+        { result = nl(AST::Decl, val[0], val[1].to_s, val[3], true) }
+    | IDENTIFIER ASSIGN expr
+        { result = nl(AST::Assign, val[0], AST::Ident.new(val[0].to_s), val[2]) }
+    ;
+
+  for_update
+    : /* empty */                       { result = nil }
+    | IDENTIFIER ASSIGN expr
+        { result = nl(AST::Assign, val[0], AST::Ident.new(val[0].to_s), val[2]) }
+    | IDENTIFIER PLUS_ASSIGN expr
+        { result = nl(AST::CompoundAssign, val[0], AST::Ident.new(val[0].to_s), Op::ADD_ASSIGN, val[2]) }
+    | IDENTIFIER MINUS_ASSIGN expr
+        { result = nl(AST::CompoundAssign, val[0], AST::Ident.new(val[0].to_s), Op::SUB_ASSIGN, val[2]) }
+    | IDENTIFIER STAR_ASSIGN expr
+        { result = nl(AST::CompoundAssign, val[0], AST::Ident.new(val[0].to_s), Op::MUL_ASSIGN, val[2]) }
+    | IDENTIFIER SLASH_ASSIGN expr
+        { result = nl(AST::CompoundAssign, val[0], AST::Ident.new(val[0].to_s), Op::DIV_ASSIGN, val[2]) }
+    | IDENTIFIER PERCENT_ASSIGN expr
+        { result = nl(AST::CompoundAssign, val[0], AST::Ident.new(val[0].to_s), Op::MOD_ASSIGN, val[2]) }
+    | INCREMENT IDENTIFIER
+        { result = nl(AST::IncDec, val[0], AST::Ident.new(val[1].to_s), Op::INC, true) }
+    | DECREMENT IDENTIFIER
+        { result = nl(AST::IncDec, val[0], AST::Ident.new(val[1].to_s), Op::DEC, true) }
+    | IDENTIFIER INCREMENT
+        { result = nl(AST::IncDec, val[0], AST::Ident.new(val[0].to_s), Op::INC, false) }
+    | IDENTIFIER DECREMENT
+        { result = nl(AST::IncDec, val[0], AST::Ident.new(val[0].to_s), Op::DEC, false) }
+    ;
+
+  struct_def
+    : STRUCT IDENTIFIER LBRACE struct_field_list RBRACE
+        { result = nl(AST::TypeDef, val[0], val[1].to_s, val[3], false) }
+    ;
+
+  class_def
+    : CLASS IDENTIFIER LBRACE struct_field_list RBRACE
+        { result = nl(AST::TypeDef, val[0], val[1].to_s, val[3], true) }
+    ;
+
+  struct_field_list
+    : struct_field                      { result = [val[0]] }
+    | struct_field_list struct_field    { result = val[0] << val[1] }
+    ;
+
+  struct_field
+    : LET IDENTIFIER COLON type_spec
+        { result = nl(AST::StructField, val[0], val[1].to_s, val[3], nil, true) }
+    | VAR IDENTIFIER COLON type_spec
+        { result = nl(AST::StructField, val[0], val[1].to_s, val[3], nil, false) }
+    | LET IDENTIFIER ASSIGN expr
+        { result = nl(AST::StructField, val[0], val[1].to_s, nil, val[3], true) }
+    | VAR IDENTIFIER ASSIGN expr
+        { result = nl(AST::StructField, val[0], val[1].to_s, nil, val[3], false) }
+    | WEAK VAR IDENTIFIER COLON type_spec
+        {
+          result = AST::StructField.new(val[2].to_s, val[4], nil, false)
+          result.is_weak = true; result.line = lval(val[0])
+        }
+    | WEAK LET IDENTIFIER COLON type_spec
+        {
+          result = AST::StructField.new(val[2].to_s, val[4], nil, true)
+          result.is_weak = true; result.line = lval(val[0])
+        }
+    ;
+
+  arg_list
+    : /* empty */                       { result = [] }
+    | arg_or_named                      { result = [val[0]] }
+    | arg_list COMMA arg_or_named       { result = val[0] << val[2] }
+    ;
+
+  arg_or_named
+    : expr                              { result = val[0] }
+    | IDENTIFIER COLON expr             { result = AST::NamedArg.new(val[0].to_s, val[2]) }
+    ;
+
+  tuple_rest
+    : expr                              { result = [val[0]] }
+    | tuple_rest COMMA expr             { result = val[0] << val[2] }
+    ;
+
+  named_tuple_rest
+    : IDENTIFIER COLON expr             { result = [AST::NamedArg.new(val[0].to_s, val[2])] }
+    | named_tuple_rest COMMA IDENTIFIER COLON expr
+        { result = val[0] << AST::NamedArg.new(val[2].to_s, val[4]) }
+    ;
+
+  object_field_list
+    : IDENTIFIER COLON expr
+        { result = [AST::NamedArg.new(val[0].to_s, val[2])] }
+    | object_field_list COMMA IDENTIFIER COLON expr
+        { result = val[0] << AST::NamedArg.new(val[2].to_s, val[4]) }
+    ;
+
+  primary
+    : INT_LIT                           { result = AST::IntLit.new(ival(val[0])); result.line = lval(val[0]) }
+    | FLOAT_LIT                         { result = AST::FloatLit.new(fval(val[0])); result.line = lval(val[0]) }
+    | STRING_LIT                        { result = AST::StringLit.new(sval(val[0])); result.line = lval(val[0]) }
+    | BOOL_LIT                          { result = AST::BoolLit.new(bval(val[0])); result.line = lval(val[0]) }
+    | CHAR_LIT                          { result = AST::CharLit.new(sval(val[0])); result.line = lval(val[0]) }
+    | IDENTIFIER                        { result = AST::Ident.new(val[0].to_s); result.line = lval(val[0]) }
+    | interp_string                     { result = val[0] }
+    | type_kw LBRACKET RBRACKET
+        { result = AST::TypedEmptyArray.new(val[0][0]); result.line = val[0][1] }
+    | LBRACKET array_elems RBRACKET
+        { result = AST::ArrayLiteral.new(val[1]); result.line = lval(val[0]) }
+    | LBRACKET type_kw COLON type_kw RBRACKET
+        { result = AST::TypedEmptyHash.new(val[1][0], val[3][0]); result.line = lval(val[0]) }
+    | LBRACKET type_kw COLON IDENTIFIER RBRACKET
+        { result = AST::TypedEmptyHash.new(val[1][0], TK_STRUCT, val[3].to_s); result.line = lval(val[0]) }
+    | LBRACKET hash_pairs RBRACKET
+        { result = AST::HashLiteral.new(val[1]); result.line = lval(val[0]) }
+    ;
+
+  array_elems
+    : expr                              { result = [val[0]] }
+    | array_elems COMMA expr            { result = val[0] << val[2] }
+    ;
+
+  hash_pairs
+    : expr COLON expr                       { result = [AST::HashPair.new(val[0], val[2])] }
+    | hash_pairs COMMA expr COLON expr      { result = val[0] << AST::HashPair.new(val[2], val[4]) }
+    ;
+
+  interp_string
+    : interp_parts expr STRING_TAIL
+        {
+          tail_s = sval(val[2])
+          if val[0]
+            acc = AST::BinOp.new(val[0], Op::ADD, val[1])
+          else
+            acc = val[1]
+          end
+          if tail_s.length > 0
+            result = AST::BinOp.new(acc, Op::ADD, AST::StringLit.new(tail_s))
+          else
+            result = acc
+          end
+        }
+    ;
+
+  interp_parts
+    : STRING_PART
+        {
+          s = sval(val[0])
+          result = s.length > 0 ? AST::StringLit.new(s) : nil
+        }
+    | interp_parts expr STRING_PART
+        {
+          part_s = sval(val[2])
+          if val[0]
+            acc = AST::BinOp.new(val[0], Op::ADD, val[1])
+          else
+            acc = val[1]
+          end
+          if part_s.length > 0
+            result = AST::BinOp.new(acc, Op::ADD, AST::StringLit.new(part_s))
+          else
+            result = acc
+          end
+        }
+    ;
+
+end
+
+---- header
+require_relative 'ast'
+
+---- inner
+
+  include Zinc
+
+  # Line-tagged string: carries line number alongside the string value
+  class LStr < String
+    attr_reader :line
+    def initialize(str, line = 0)
+      super(str.to_s)
+      @line = line
+    end
+  end
+
+  # Line-tagged numeric/boolean value
+  class LVal
+    attr_reader :val, :line
+    def initialize(val, line = 0)
+      @val = val
+      @line = line
+    end
+  end
+
+  def parse(source, filename = nil)
+    @scanner = Scanner.new(source)
+    @tokens = @scanner.tokens
+    @pos = 0
+    @nerrs = 0
+    @filename = filename
+    @last_line = 1
+    result = do_parse
+    [result, @nerrs]
+  end
+
+  def next_token
+    return [false, '$end'] if @pos >= @tokens.size
+    tok = @tokens[@pos]
+    @pos += 1
+    @last_line = tok[2]
+    v = tok[1]
+    wrapped = case v
+      when String then LStr.new(v, tok[2])
+      when Integer, Float, true, false then LVal.new(v, tok[2])
+      else v
+      end
+    [tok[0], wrapped]
+  end
+
+  def on_error(token_id, value, vstack)
+    @nerrs += 1
+    line = lval(value)
+    token_name = token_to_str(token_id) || '?'
+    $stderr.puts "Parse error at line #{line}: syntax error, unexpected #{token_name}"
+  end
+
+  # Extract line from a value (works for LStr, LVal, AST::Node)
+  def lval(v)
+    return v.line if v.respond_to?(:line) && v.line.is_a?(Integer) && v.line > 0
+    @last_line
+  end
+
+  # Extract raw integer from LVal
+  def ival(v); v.is_a?(LVal) ? v.val : v.to_i; end
+
+  # Extract raw float from LVal
+  def fval(v); v.is_a?(LVal) ? v.val : v.to_f; end
+
+  # Extract raw boolean from LVal
+  def bval(v); v.is_a?(LVal) ? v.val : v; end
+
+  # Extract raw string from LStr
+  def sval(v); v.is_a?(LStr) ? v.to_s : v.to_s; end
+
+  # Create an AST node (no line)
+  def n(klass, *args)
+    klass.new(*args)
+  end
+
+  # Create an AST node with line from the first argument (a line source)
+  # nl(NodeClass, line_source, constructor_arg1, constructor_arg2, ...)
+  def nl(klass, line_src, *args)
+    node = klass.new(*args)
+    node.line = lval(line_src)
+    node
+  end

@@ -5,17 +5,16 @@ A statically-typed, expression-oriented language that transpiles to C.
 ## Quick Start
 
 ```bash
-make            # Build the compiler
-./build/zinc -c program.zn -o program
+ruby bin/zinc -c program.zn -o program
 ./program
 ```
 
 ## Building
 
-Requires GCC, Flex, and Bison.
+Requires Ruby and GCC.
 
 ```bash
-make            # Build the compiler (build/zinc)
+make            # Build (compile parser grammar via racc)
 make test-all   # Run all tests
 make clean      # Clean build artifacts
 ```
